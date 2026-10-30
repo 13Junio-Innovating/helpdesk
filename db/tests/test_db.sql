@@ -278,6 +278,25 @@ SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template = 'password_rese
               'e-mail de reset enfileirado (sem tenant)');
 DELETE FROM email_outbox WHERE template = 'password_reset' AND to_email LIKE '%.test.local';
 
+-- ======================================================================
+\warn '== 12. e-mail de convite (011) =='
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ua', false);
+INSERT INTO invitations (tenant_id, email, role, token_hash, invited_by)
+VALUES (:'ta', 'convidado@alpha.test.local', 'requester', 'tok-conv', :'ua') RETURNING id AS inv1 \gset
+SELECT enqueue_invitation_email(:'inv1', 'raw-conv');
+SELECT app_set_context(:'ta', :'ug', false);
+SELECT tst.expect_error(format('SELECT enqueue_invitation_email(%L, ''x'')', :'inv1'), '42501', 'agente não enfileira convite');
+SELECT app_set_context(:'tb', :'ub', false);
+SELECT tst.expect_error(format('SELECT enqueue_invitation_email(%L, ''x'')', :'inv1'), 'P0002', 'admin de outro tenant não usa convite alheio');
+SELECT app_set_context(NULL, NULL, false);
+SELECT out_user_id AS conv FROM accept_invitation('tok-conv', 'Convidado', 'h') \gset
+SELECT app_set_context(:'ta', :'ua', false);
+SELECT tst.expect_error(format('SELECT enqueue_invitation_email(%L, ''x'')', :'inv1'), 'P0002', 'convite já aceito não gera e-mail');
+RESET ROLE;
+SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template = 'invitation' AND to_email = 'convidado@alpha.test.local'
+                 AND payload->>'token' = 'raw-conv' AND payload->>'tenant_name' = 'Alpha Ltda') = 1, 'convite enfileirado com dados do workspace');
+
 -- ---------- limpeza ----------
 SELECT delete_tenant(id) FROM tenants WHERE slug IN ('t-alpha', 't-beta');
 DELETE FROM users   WHERE email LIKE '%.test.local';

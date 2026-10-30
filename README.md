@@ -5,6 +5,22 @@ Etapas: **banco** (PostgreSQL 16, pronto) → **API** (NestJS, em andamento) →
 Service desk multi-tenant (chamados, SLA com horário comercial, filas, categorias,
 base de conhecimento, apontamento de horas, automações, planos e limites).
 
+## Ver rodando na sua máquina
+
+Pré-requisitos: Docker, Node 22+, cliente `psql` (os scripts de `db/` usam).
+
+```bash
+git clone https://github.com/13Junio-Innovating/helpdesk && cd helpdesk
+git checkout feat/fase-3-catalogo-equipe-kb     # ou a branch da fase mais recente
+docker compose up -d && cp .env.example .env && ./db/dev-reset.sh
+npx npm@11 install && npm run build -w shared
+npm run start:dev -w api
+```
+
+Abra **http://localhost:3000/docs** (Swagger). Para testar, clique em `POST /api/v1/auth/login`, envie
+`{"email":"admin@demo.local","password":"demo1234"}`, copie o `accessToken`, clique em **Authorize** e cole o token.
+O front React (http://localhost:5173) entra nas fases 5 e 6.
+
 ## Subir em desenvolvimento
 
 ```bash
@@ -34,6 +50,11 @@ api/                  NestJS 12 (ESM) + pg puro
   src/auth/             login em 2 etapas, refresh com rotação, signup, convite, reset de senha
   src/catalog/          leitura de status/prioridades/categorias/filas (CRUD na fase 3)
   src/tickets/          chamados, mensagens, ações em lote, apontamento de horas
+  src/catalog/          CRUD de filas, categorias, prioridades, status, horário comercial, SLA e automações
+  src/team/             membros, convites, organizações, /agents
+  src/kb/               base de conhecimento
+  src/reports/          /reports/overview (SQL agregado)
+  src/tenants/          /tenant (plano, uso, assinatura)
   src/health/           /health (banco) e /health/ready (migrations exigidas)
   test/                 e2e (vitest + supertest) contra o banco de dev
 db/
@@ -42,6 +63,7 @@ db/
   migrations/         001 tipos · 002 tenancy · 003 catálogo+SLA · 004 chamados · 005 KB/outbox
                       006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
                       010 sessões (refresh com rotação) + reset de senha
+                      011 e-mail de convite pela outbox
   seed/dev.sql        dados de demonstração
   tests/              suíte SQL (60 asserções) que roda como sd_app/sd_worker de verdade
 ```
@@ -121,6 +143,26 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
   - **PATCH e lote**: um único `UPDATE` só com colunas de uma lista fixa, a mesma dos GRANTs; os triggers rodam uma vez para o conjunto de mudanças. O lote é tudo ou nada; IDs inexistentes ou de outro tenant voltam em `skipped`. Quando o UPDATE não afeta nenhuma linha: 404 se o chamado não é visível, 403 se é visível mas a RLS não deixa alterar.
   - **Cliente**: ao abrir chamado, a API descarta organização, canal e tags, além do que o banco já ignora (status, prioridade, fila, responsável). Abrir em nome de outra pessoa dá 403.
   - **Horas**: só o autor ou um admin remove um apontamento. Essa é uma regra da API: a RLS libera qualquer agente.
+- **Catálogo**:
+  - Leitura de status, prioridades, categorias e filas: todos os papéis. Horário comercial, SLA e automações: só a equipe lê. Escrita: só admin.
+  - O `@Roles` é a primeira barreira; a RLS decide. Há teste provando que a RLS barra o agente mesmo sem o guard.
+  - Padrão (`isDefault`) é exclusivo. Status e prioridade padrão não podem ser removidos nem desmarcados (409), porque o banco depende deles para novos chamados.
+  - Registro em uso → 409 `in_use`.
+  - Mudar uma política de SLA não recalcula chamados já abertos.
+- **Formato das automações** (validado na API; o worker avalia na fase 4). Todas as condições precisam valer (E).
+  - `conditions`: `[{ "field": "priority.name", "op": "eq|in|contains", "value": "Urgente" | ["Alta","Urgente"] }]`.
+    Campos: `subject`, `description`, `channel`, `tags`, `priority.id|name`, `status.id|name|kind`, `category.id|name`, `queue.id`, `organization.id`, `assignee.id`, `requester.id`.
+  - `actions`: `assign_queue {queueId}`, `assign_agent {userId}`, `set_priority {priorityId}`, `add_tag {value}`, `notify_staff`.
+- **Convites**:
+  - O token só existe em claro no e-mail (enfileirado pela função `enqueue_invitation_email`, migration 011). Nunca volta na resposta, nem para o admin.
+  - Reenviar convite invalida o anterior. Convidar quem já é membro ativo → 409 `already_member`.
+  - O limite de agentes é do banco: dá 402 ao promover ou ao aceitar o convite.
+  - O workspace nunca fica sem admin ativo (409 `last_admin`).
+- **KB**:
+  - Slug gerado do título, único no tenant (`-2`, `-3`…) e estável ao editar o título.
+  - O cliente só vê artigos publicados no portal (RLS).
+  - Busca full-text em português ordenada por relevância, só a primeira página.
+- **Relatórios**: período de 30 dias no fuso do workspace; "abertos" e "vencidos" são o estado atual.
 - Erros de validação: `{ code: 'validation_failed', details: [{ field, message }] }` em pt-BR.
 - Stack: NestJS 12 (ESM), vitest (template oficial do Nest 12), pg sem ORM, zod para validar o env, pino com `requestId`
   e redação de `authorization`/`cookie`/senhas/tokens.

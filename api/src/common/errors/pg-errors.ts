@@ -50,6 +50,9 @@ export function mapPgError(e: PgLikeError): MappedError {
     case '42501':
       return { status: 403, code: 'forbidden', message: 'Você não tem permissão para esta ação.' };
     case '23503':
+      if (e.message.startsWith('update or delete on table')) {
+        return { status: 409, code: 'in_use', message: 'Este registro está em uso e não pode ser removido.' };
+      }
       return { status: 422, code: 'invalid_reference', message: 'Um dos registros referenciados não existe ou não está disponível.' };
     case '23505':
       if (e.message === 'email_already_registered') {
