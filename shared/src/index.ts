@@ -38,6 +38,9 @@ export const ERROR_CODES = [
   'too_many_requests',
   'internal_error',
   'service_unavailable',
+  'in_use',
+  'last_admin',
+  'already_member',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -184,4 +187,98 @@ export interface BulkUpdateResult {
 export interface ValidationIssue {
   field: string;
   message: string;
+}
+
+export const AUTOMATION_EVENTS = ['ticket_created', 'ticket_updated', 'sla_warning', 'sla_breached'] as const;
+export type AutomationEvent = (typeof AUTOMATION_EVENTS)[number];
+
+/** Campos que as condições de automação podem testar (avaliados pelo worker, fase 4). */
+export const AUTOMATION_FIELDS = [
+  'subject', 'description', 'channel', 'tags',
+  'priority.id', 'priority.name', 'status.id', 'status.name', 'status.kind',
+  'category.id', 'category.name', 'queue.id', 'organization.id', 'assignee.id', 'requester.id',
+] as const;
+export type AutomationField = (typeof AUTOMATION_FIELDS)[number];
+
+export const AUTOMATION_OPS = ['eq', 'in', 'contains'] as const;
+export type AutomationOp = (typeof AUTOMATION_OPS)[number];
+
+export interface AutomationCondition {
+  field: AutomationField;
+  op: AutomationOp;
+  value: string | string[];
+}
+
+export type AutomationAction =
+  | { type: 'assign_queue'; queueId: string }
+  | { type: 'assign_agent'; userId: string }
+  | { type: 'set_priority'; priorityId: string }
+  | { type: 'add_tag'; value: string }
+  | { type: 'notify_staff' };
+
+export interface Member {
+  userId: string;
+  name: string;
+  email: string;
+  role: MemberRole;
+  active: boolean;
+  organization: Ref | null;
+  phone: string | null;
+  jobTitle: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: MemberRole;
+  organizationId: string | null;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface TenantInfo {
+  id: string;
+  name: string;
+  slug: string;
+  status: TenantStatus;
+  timezone: string;
+  trialEndsAt: string | null;
+  plan: MeResponse['plan'] & { priceCents: number };
+  usage: { agents: number; ticketsThisMonth: number };
+  /** só admin */
+  subscription: { status: string; provider: string | null; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean } | null;
+}
+
+export interface KbArticleSummary {
+  id: string;
+  title: string;
+  slug: string;
+  status: 'draft' | 'published' | 'archived';
+  visibility: 'internal' | 'portal';
+  category: Ref | null;
+  excerpt: string;
+  publishedAt: string | null;
+  updatedAt: string;
+}
+
+export interface KbArticle extends KbArticleSummary {
+  body: string;
+  author: Ref | null;
+  createdAt: string;
+}
+
+export interface ReportsOverview {
+  periodDays: number;
+  openByStatus: Array<{ statusId: string; name: string; kind: StatusKind; color: string; count: number }>;
+  overdue: number;
+  avgFirstResponseMinutes: number | null;
+  avgResolutionMinutes: number | null;
+  /** % de cronômetros cumpridos no prazo entre os encerrados ou estourados no período; null sem dados */
+  slaCompliancePct: number | null;
+  ticketsPerDay: Array<{ date: string; created: number; resolved: number }>;
+  byAgent: Array<{ userId: string; name: string; open: number; resolved: number; minutesTracked: number }>;
+  byCategory: Array<{ categoryId: string | null; name: string; count: number }>;
+  minutesTracked: number;
 }

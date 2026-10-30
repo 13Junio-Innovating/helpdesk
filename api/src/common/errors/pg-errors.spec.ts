@@ -4,6 +4,7 @@ describe('mapPgError', () => {
   it.each([
     [{ code: '42501', message: 'new row violates row-level security policy' }, 403, 'forbidden'],
     [{ code: '23503', message: 'fk' }, 422, 'invalid_reference'],
+    [{ code: '23503', message: 'update or delete on table "queues" violates foreign key constraint' }, 409, 'in_use'],
     [{ code: '23505', message: 'duplicate key' }, 409, 'conflict'],
     [{ code: '23505', message: 'email_already_registered' }, 409, 'email_already_registered'],
     [{ code: '23505', message: 'dup', constraint: 'tenants_slug_key' }, 409, 'slug_taken'],

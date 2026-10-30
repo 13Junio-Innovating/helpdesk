@@ -15,6 +15,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { HealthModule } from './health/health.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { TicketsModule } from './tickets/tickets.module.js';
+import { TeamModule } from './team/team.module.js';
+import { KbModule } from './kb/kb.module.js';
+import { ReportsModule } from './reports/reports.module.js';
+import { TenantsModule } from './tenants/tenants.module.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
 
@@ -64,6 +68,10 @@ const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
     AuthModule,
     CatalogModule,
     TicketsModule,
+    TeamModule,
+    KbModule,
+    ReportsModule,
+    TenantsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

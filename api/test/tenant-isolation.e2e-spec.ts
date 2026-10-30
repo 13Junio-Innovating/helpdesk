@@ -88,7 +88,7 @@ describe('Isolamento entre tenants e falha fechada (e2e)', () => {
     const demoCategory = a.body[0].id as string;
     await http().get(`/api/v1/catalog/categories/${demoCategory}`).set(auth(demoToken)).expect(200);
     const res = await http().get(`/api/v1/catalog/categories/${demoCategory}`).set(auth(otherToken)).expect(404);
-    expect(res.body).toEqual({ code: 'not_found', message: 'Categoria não encontrada.' });
+    expect(res.body).toEqual({ code: 'not_found', message: 'Não encontramos a categoria.' });
   });
 
   it('ID malformado → 400', async () => {
