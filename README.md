@@ -14,10 +14,11 @@ git clone https://github.com/13Junio-Innovating/helpdesk && cd helpdesk
 git checkout feat/fase-3-catalogo-equipe-kb     # ou a branch da fase mais recente
 docker compose up -d && cp .env.example .env && ./db/dev-reset.sh
 npx npm@11 install && npm run build -w shared
-npm run start:dev -w api
+npm run start:dev -w api            # API
+npm run build -w api && npm run start:worker -w api   # worker (outro terminal)
 ```
 
-Abra **http://localhost:3000/docs** (Swagger). Para testar, clique em `POST /api/v1/auth/login`, envie
+Abra **http://localhost:3000/docs** (Swagger) e **http://localhost:8025** (Mailpit: todos os e-mails enviados em dev). Para testar, clique em `POST /api/v1/auth/login`, envie
 `{"email":"admin@demo.local","password":"demo1234"}`, copie o `accessToken`, clique em **Authorize** e cole o token.
 O front React (http://localhost:5173) entra nas fases 5 e 6.
 
@@ -55,6 +56,7 @@ api/                  NestJS 12 (ESM) + pg puro
   src/kb/               base de conhecimento
   src/reports/          /reports/overview (SQL agregado)
   src/tenants/          /tenant (plano, uso, assinatura)
+  src/worker/           processo separado (sd_worker): SLA, outbox de e-mail, automações, alertas
   src/health/           /health (banco) e /health/ready (migrations exigidas)
   test/                 e2e (vitest + supertest) contra o banco de dev
 db/
@@ -63,7 +65,7 @@ db/
   migrations/         001 tipos · 002 tenancy · 003 catálogo+SLA · 004 chamados · 005 KB/outbox
                       006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
                       010 sessões (refresh com rotação) + reset de senha
-                      011 e-mail de convite pela outbox
+                      011 e-mail de convite pela outbox · 012 estado do worker (automation_runs, sla_alerts)
   seed/dev.sql        dados de demonstração
   tests/              suíte SQL (60 asserções) que roda como sd_app/sd_worker de verdade
 ```
@@ -163,6 +165,22 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
   - O cliente só vê artigos publicados no portal (RLS).
   - Busca full-text em português ordenada por relevância, só a primeira página.
 - **Relatórios**: período de 30 dias no fuso do workspace; "abertos" e "vencidos" são o estado atual.
+- **Worker** (`npm run start:worker -w api`): processo separado, sem HTTP. Conecta como `sd_worker`, que nunca entra no AppModule.
+  - **SLA** (a cada 1 min): roda `sla_mark_breaches()`.
+    - Alerta "perto de vencer" quando o cronômetro passa de 80% do prazo, em tempo corrido desde a abertura. Vai uma vez por cronômetro (`sla_alerts`) para o responsável ou, sem responsável, para os admins.
+    - O alerta também grava o evento `sla_warning`, que as automações enxergam.
+  - **Outbox de e-mail** (a cada 5 s):
+    - Reserva um lote com `FOR UPDATE SKIP LOCKED` e marca `sending` com prazo de reserva (`scheduled_at`); envia fora da transação.
+    - Marca `sent`, ou `failed` com backoff exponencial (30 s · 2ⁿ, máx. 1 h). Desiste após 5 tentativas.
+    - Linha presa em `sending` (worker morreu) volta quando a reserva expira.
+    - O token (convite/reset) é apagado do payload ao enviar ou desistir.
+    - Seguro com várias instâncias: há teste com 2 workers e 40 e-mails.
+  - **Automações** (a cada 5 s):
+    - Avalia eventos novos de `ticket_events` (último dia), um por transação com `SKIP LOCKED`, registrando em `automation_runs`.
+    - Só roda em planos com `features.automations`.
+    - Eventos gerados pelas próprias ações ficam como `skipped`: automação não dispara automação (sem loop).
+    - Ação inválida desfaz só as ações (SAVEPOINT) e grava o erro.
+  - Templates pt-BR com HTML escapado. Nota interna nunca vai por e-mail: o corpo do `ticket_reply` só é lido se for `public_reply`.
 - Erros de validação: `{ code: 'validation_failed', details: [{ field, message }] }` em pt-BR.
 - Stack: NestJS 12 (ESM), vitest (template oficial do Nest 12), pg sem ORM, zod para validar o env, pino com `requestId`
   e redação de `authorization`/`cookie`/senhas/tokens.
