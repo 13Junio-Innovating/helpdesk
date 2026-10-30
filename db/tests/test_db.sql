@@ -223,7 +223,8 @@ SET ROLE sd_worker;
 SELECT sla_mark_breaches() AS n \gset
 SELECT tst.ok(:n >= 1, 'sla_mark_breaches marcou chamados vencidos');
 SELECT tst.ok((SELECT count(*) FROM ticket_events WHERE ticket_id = :'t2' AND event_type = 'sla_breached') = 1, 'estouro registrado na auditoria');
-SELECT tst.ok(sla_mark_breaches() = 0 OR true, 'segunda execução não duplica') ;
+SELECT sla_mark_breaches() AS n2 \gset
+SELECT tst.ok((SELECT count(*) FROM ticket_events WHERE ticket_id = :'t2' AND event_type = 'sla_breached') = 1, 'segunda execução não duplica');
 SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE tenant_id = :'ta' AND template = 'ticket_created') >= 3, 'outbox: confirmação de abertura enfileirada');
 SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE tenant_id = :'ta' AND template = 'ticket_reply') = 1, 'outbox: resposta da equipe enfileirada');
 RESET ROLE;
@@ -232,6 +233,50 @@ SELECT app_set_context(:'ta', :'ua', false);
 SELECT tst.expect_error('SELECT * FROM email_outbox', '42501', 'API não acessa a outbox');
 SELECT tst.expect_error('SELECT sla_mark_breaches()', '42501', 'API não executa rotinas do worker');
 RESET ROLE;
+
+-- ======================================================================
+\warn '== 11. sessões (refresh com rotação) e redefinição de senha =='
+SET ROLE sd_app;
+SELECT app_set_context(NULL, NULL, false);
+SELECT tst.expect_error('SELECT * FROM auth_refresh_tokens', '42501', 'API não lê refresh tokens diretamente');
+SELECT tst.expect_error('SELECT * FROM password_reset_tokens', '42501', 'API não lê tokens de reset diretamente');
+SELECT tst.ok(auth_can_access(:'ua', :'ta') AND NOT auth_can_access(:'ua', :'tb'), 'auth_can_access respeita membership');
+SELECT auth_session_create(:'ua', :'ta', 'rt-1', interval '30 days') AS fam \gset
+SELECT tst.expect_error(format('SELECT auth_session_create(%L, %L, ''rt-x'', interval ''1 day'')', :'ua', :'tb'),
+                        '28000', 'não cria sessão em tenant sem membership');
+SELECT tst.ok((SELECT status = 'ok' AND user_id = :'ua' AND tenant_id = :'ta' FROM auth_session_rotate('rt-1', 'rt-2', interval '30 days')),
+              'rotação devolve usuário e tenant');
+SELECT tst.ok((SELECT status FROM auth_session_rotate('rt-2', 'rt-3', interval '30 days')) = 'ok', 'token novo rotaciona de novo');
+SELECT tst.ok((SELECT status FROM auth_session_rotate('rt-1', 'rt-x1', interval '30 days')) = 'reused', 'reapresentar token antigo é detectado como reuso');
+SELECT tst.ok((SELECT status FROM auth_session_rotate('rt-3', 'rt-4', interval '30 days')) = 'invalid', 'reuso revoga a família inteira');
+SELECT tst.ok((SELECT status FROM auth_session_rotate('nao-existe', 'rt-5', interval '30 days')) = 'invalid', 'token desconhecido é inválido');
+
+SELECT auth_session_create(:'ug', :'ta', 'rt-ag', interval '30 days') AS fam2 \gset
+SELECT auth_session_revoke('rt-ag');
+SELECT tst.ok((SELECT status FROM auth_session_rotate('rt-ag', 'rt-ag2', interval '30 days')) = 'invalid', 'logout revoga a sessão');
+
+SELECT auth_session_create(:'ug', :'ta', 'rt-ag3', interval '30 days') AS fam3 \gset
+RESET ROLE;
+UPDATE users SET disabled_at = now() WHERE id = :'ug';
+SET ROLE sd_app;
+SELECT tst.ok((SELECT status FROM auth_session_rotate('rt-ag3', 'rt-ag4', interval '30 days')) = 'invalid', 'usuário desativado não renova sessão');
+RESET ROLE;
+UPDATE users SET disabled_at = NULL WHERE id = :'ug';
+SET ROLE sd_app;
+
+SELECT tst.ok(NOT auth_reset_create('ninguem@alpha.test.local', 'rs-0', 'raw-0', interval '1 hour'), 'reset para e-mail inexistente não gera token');
+SELECT tst.ok(auth_reset_create('cliente1@alpha.test.local', 'rs-1', 'raw-1', interval '1 hour'), 'reset gera token');
+SELECT tst.ok(auth_reset_create('cliente1@alpha.test.local', 'rs-2', 'raw-2', interval '1 hour'), 'novo pedido de reset');
+SELECT tst.expect_error($$SELECT auth_reset_consume('rs-1', 'novo-hash')$$, 'P0002', 'pedido anterior é invalidado pelo novo');
+SELECT auth_session_create(:'ur1', :'ta', 'rt-c1', interval '30 days') AS fam4 \gset
+SELECT tst.ok(auth_reset_consume('rs-2', 'novo-hash') = :'ur1', 'reset troca a senha');
+SELECT tst.expect_error($$SELECT auth_reset_consume('rs-2', 'outro')$$, 'P0002', 'token de reset é de uso único');
+SELECT tst.ok((SELECT password_hash FROM auth_get_user_by_email('cliente1@alpha.test.local')) = 'novo-hash', 'nova senha gravada');
+SELECT tst.ok((SELECT status FROM auth_session_rotate('rt-c1', 'rt-c2', interval '30 days')) = 'invalid', 'reset derruba sessões abertas');
+RESET ROLE;
+SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template = 'password_reset' AND to_email = 'cliente1@alpha.test.local' AND tenant_id IS NULL) = 2,
+              'e-mail de reset enfileirado (sem tenant)');
+DELETE FROM email_outbox WHERE template = 'password_reset' AND to_email LIKE '%.test.local';
 
 -- ---------- limpeza ----------
 SELECT delete_tenant(id) FROM tenants WHERE slug IN ('t-alpha', 't-beta');
