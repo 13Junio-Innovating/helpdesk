@@ -18,7 +18,14 @@ npm run start:dev -w api            # API
 npm run build -w api && npm run start:worker -w api   # worker (outro terminal)
 ```
 
-Abra **http://localhost:3000/docs** (Swagger) e **http://localhost:8025** (Mailpit: todos os e-mails enviados em dev). Para testar, clique em `POST /api/v1/auth/login`, envie
+npm run dev -w web                  # front React (outro terminal)
+```
+
+Abra **http://localhost:5173** (app), **http://localhost:3000/docs** (Swagger) e **http://localhost:8025** (Mailpit: todos os e-mails enviados em dev).
+Logins do seed (senha `demo1234`): cliente `joao@acme.local`; equipe `admin@demo.local`.
+
+```bash
+npm run test:web                    # Playwright (sobe API e Vite sozinho; precisa do Postgres) Para testar, clique em `POST /api/v1/auth/login`, envie
 `{"email":"admin@demo.local","password":"demo1234"}`, copie o `accessToken`, clique em **Authorize** e cole o token.
 O front React (http://localhost:5173) entra nas fases 5 e 6.
 
@@ -43,6 +50,12 @@ Seed: workspace `demo` — `admin@demo.local` / `demo1234` (agentes `carlos@`, `
 
 ```
 shared/               tipos/enums compartilhados API ⇄ front (@helpdesk/shared)
+web/                  Vite + React 18 + TS (React Router 7, TanStack Query, RHF + Zod, Tailwind 4, Radix)
+  src/lib/api.ts        cliente HTTP único: token em memória, refresh automático "single flight", erros { code, message }
+  src/auth/             sessão (restaura pelo cookie ao abrir), guardas por papel
+  src/pages/public/     entrar (com seletor de workspace), cadastro, esqueci/redefinir senha, convite, conta suspensa
+  src/pages/portal/     portal do cliente: meus chamados, abrir chamado (sugere artigos da KB), conversa, central de ajuda
+  e2e/                  Playwright contra a stack real
 api/                  NestJS 12 (ESM) + pg puro
   src/common/db/        DbService: withTenant() / withoutTenant() — único caminho para o banco
   src/common/errors/    filtro global + mapeamento SQLSTATE → { code, message }
@@ -181,6 +194,15 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
     - Eventos gerados pelas próprias ações ficam como `skipped`: automação não dispara automação (sem loop).
     - Ação inválida desfaz só as ações (SAVEPOINT) e grava o erro.
   - Templates pt-BR com HTML escapado. Nota interna nunca vai por e-mail: o corpo do `ticket_reply` só é lido se for `public_reply`.
+- **Front**:
+  - O access token fica só em memória; o refresh fica em cookie httpOnly, e o teste confere que nada vaza para `localStorage` ou `document.cookie`.
+  - 401 dispara um único refresh compartilhado ("single flight"). Abas diferentes ainda podem disputar o refresh, o que derruba a sessão.
+  - O papel da sessão só escolhe a área (portal ou painel); quem autoriza é a API/RLS.
+  - `/chamados/:id` (link de e-mail da equipe) aberto por cliente redireciona para o portal.
+  - O tema claro/escuro/sistema é aplicado antes do primeiro paint.
+  - Telas autenticadas são carregadas sob demanda.
+  - Na KB, a busca casa **qualquer** termo relevante, ordenando por relevância, porque o cliente digita frases inteiras. A busca de chamados continua exigindo todos os termos.
+  - API e front usam **um único Vite (8.x)**. Com o Vite 6 hoisted, o Vitest compilava sem `emitDecoratorMetadata` e a injeção do Nest quebrava.
 - Erros de validação: `{ code: 'validation_failed', details: [{ field, message }] }` em pt-BR.
 - Stack: NestJS 12 (ESM), vitest (template oficial do Nest 12), pg sem ORM, zod para validar o env, pino com `requestId`
   e redação de `authorization`/`cookie`/senhas/tokens.

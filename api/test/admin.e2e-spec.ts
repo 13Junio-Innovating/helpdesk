@@ -344,6 +344,12 @@ describe('Catálogo, equipe, convites, KB, relatórios e tenant (e2e)', () => {
       expect(search.items.map((a) => a.slug)).toEqual(['como-trocar-as-senhas-da-vpn']);
       const staffSearch = (await http().get('/api/v1/kb').set(auth(agent)).query({ q: 'senha' }).expect(200)).body as Paginated<KbArticleSummary>;
       expect(staffSearch.items).toHaveLength(2);
+
+      // frase inteira digitada pelo cliente: basta um termo relevante casar ("consigo" não está no artigo)
+      const phrase = (await http().get('/api/v1/kb').set(auth(cli)).query({ q: 'não consigo trocar minha senha' }).expect(200)).body as Paginated<KbArticleSummary>;
+      expect(phrase.items.map((a) => a.slug)).toEqual(['como-trocar-as-senhas-da-vpn']);
+      const nothing = (await http().get('/api/v1/kb').set(auth(cli)).query({ q: 'impressora' }).expect(200)).body as Paginated<KbArticleSummary>;
+      expect(nothing.items).toEqual([]);
     });
 
     it('cliente não escreve; equipe edita, arquiva e remove', async () => {

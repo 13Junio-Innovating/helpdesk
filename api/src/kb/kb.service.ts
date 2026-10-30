@@ -61,10 +61,11 @@ export class KbService {
     let order: string;
     let keyCols = '';
     if (q.q) {
-      // com busca: ordem por relevância, só a primeira página (sem cursor)
-      const term = p(q.q);
-      where.push(`(a.search @@ websearch_to_tsquery('portuguese', ${term}) OR a.title ILIKE '%' || ${p(q.q.replace(/[\\%_]/g, (m) => `\\${m}`))} || '%')`);
-      order = `ts_rank(a.search, websearch_to_tsquery('portuguese', ${term})) DESC, a.updated_at DESC`;
+      // com busca: QUALQUER termo relevante casa (o cliente digita frases inteiras, ex.: "não consigo
+      // redefinir a senha"); quem casa mais termos sobe no ranking. Só a primeira página (sem cursor).
+      const tsq = `replace(plainto_tsquery('portuguese', ${p(q.q)})::text, ' & ', ' | ')::tsquery`;
+      where.push(`(a.search @@ ${tsq} OR a.title ILIKE '%' || ${p(q.q.replace(/[\\%_]/g, (m) => `\\${m}`))} || '%')`);
+      order = `ts_rank(a.search, ${tsq}) DESC, a.updated_at DESC`;
     } else {
       if (q.cursor) {
         const [ts, id] = decodeCursor(q.cursor, 2);
