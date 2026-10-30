@@ -21,6 +21,10 @@ export class KbController {
     return this.kb.list(u, q);
   }
 
+  /** Para o editor da equipe (o slug pode mudar; o id não). */
+  @Roles('admin', 'agent') @Get('id/:id')
+  getById(@CurrentTenantUser() u: TenantUser, @Param('id', uuid) id: string): Promise<KbArticle> { return this.kb.getById(u, id); }
+
   @Get(':slug')
   get(@CurrentTenantUser() u: TenantUser, @Param('slug') slug: string): Promise<KbArticle> {
     if (!/^[a-z0-9-]{1,100}$/.test(slug)) throw new AppException(404, 'not_found', 'Artigo não encontrado.');
