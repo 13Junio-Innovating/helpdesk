@@ -33,6 +33,7 @@ api/                  NestJS 12 (ESM) + pg puro
   src/common/throttle/  rate limit (geral por IP; login/signup/forgot por IP e por e-mail)
   src/auth/             login em 2 etapas, refresh com rotação, signup, convite, reset de senha
   src/catalog/          leitura de status/prioridades/categorias/filas (CRUD na fase 3)
+  src/tickets/          chamados, mensagens, ações em lote, apontamento de horas
   src/health/           /health (banco) e /health/ready (migrations exigidas)
   test/                 e2e (vitest + supertest) contra o banco de dev
 db/
@@ -110,6 +111,17 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
   deve apagar o token do payload depois de enviar.
 - **Rate limit** em memória (por instância): geral 300 req/min por IP; login/signup/accept-invite/forgot/reset com janelas
   de 15 min por IP (30) e por e-mail (10). Com várias instâncias, trocar o storage por Redis.
+- **Chamados**:
+  - **Listagem**: `GET /tickets` usa paginação por cursor (keyset), com `limit` de até 100.
+    - O cursor guarda os valores de ordenação como texto vindo do próprio Postgres; um `Date` do JS perderia os microssegundos e repetiria ou pularia linhas.
+    - Nomes de status, prioridade e pessoas e o SLA agregado vêm no mesmo SELECT, sem N+1.
+    - Filtros: `status` (IDs e/ou tipos separados por vírgula), `assignee=me|none|<id>`, `queue`, `category`, `priority`, `organization`, `requester`, `sla=breached|running|paused`, `tag`, `createdFrom/To`, `sort=updated|created|priority|due`.
+    - `q`: busca full-text em português, com fallback `ILIKE` (índice trigram) e `#número`.
+  - **SLA na resposta**: só a equipe recebe; para o cliente vem `null`, porque a RLS de `sla_timers` não devolve linhas. O resumo segue a ordem breached > running > paused > met_late > met. `sla=breached` olha o prazo em tempo real, sem esperar o worker.
+  - **PATCH e lote**: um único `UPDATE` só com colunas de uma lista fixa, a mesma dos GRANTs; os triggers rodam uma vez para o conjunto de mudanças. O lote é tudo ou nada; IDs inexistentes ou de outro tenant voltam em `skipped`. Quando o UPDATE não afeta nenhuma linha: 404 se o chamado não é visível, 403 se é visível mas a RLS não deixa alterar.
+  - **Cliente**: ao abrir chamado, a API descarta organização, canal e tags, além do que o banco já ignora (status, prioridade, fila, responsável). Abrir em nome de outra pessoa dá 403.
+  - **Horas**: só o autor ou um admin remove um apontamento. Essa é uma regra da API: a RLS libera qualquer agente.
+- Erros de validação: `{ code: 'validation_failed', details: [{ field, message }] }` em pt-BR.
 - Stack: NestJS 12 (ESM), vitest (template oficial do Nest 12), pg sem ORM, zod para validar o env, pino com `requestId`
   e redação de `authorization`/`cookie`/senhas/tokens.
 

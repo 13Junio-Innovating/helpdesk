@@ -14,6 +14,7 @@ import { throttleOptions } from './common/throttle/throttle.config.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthModule } from './health/health.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
+import { TicketsModule } from './tickets/tickets.module.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
 
@@ -62,6 +63,7 @@ const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
     HealthModule,
     AuthModule,
     CatalogModule,
+    TicketsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
