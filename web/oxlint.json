@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/crates/oxc_linter/src/rules.rs",
+  "plugins": ["react", "jsx-a11y", "typescript"],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "error",
+    "react/react-in-jsx-scope": "off"
+  },
+  "env": { "browser": true }
+}

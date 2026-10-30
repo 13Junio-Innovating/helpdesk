@@ -3,16 +3,18 @@
   "private": true,
   "workspaces": [
     "shared",
-    "api"
+    "api",
+    "web"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build -w shared && npm run build -w api",
-    "lint": "npm run lint -w api",
+    "build": "npm run build -w shared && npm run build -w api && npm run build -w web",
+    "lint": "npm run lint -w api && npm run lint -w web",
     "test:db": "set -a && . ./.env && set +a && ./db/tests/run.sh",
-    "test:api": "npm run build -w shared && npm test -w api && npm run test:e2e -w api"
+    "test:api": "npm run build -w shared && npm test -w api && npm run test:e2e -w api",
+    "test:web": "npm run build -w shared && npm run test:e2e -w web"
   },
   "packageManager": "npm@11.21.1"
 }
