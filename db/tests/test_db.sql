@@ -316,6 +316,20 @@ SELECT tst.expect_error('SELECT * FROM automation_runs', '42501', 'API não lê 
 SELECT tst.expect_error('SELECT * FROM sla_alerts', '42501', 'API não lê alertas de SLA');
 RESET ROLE;
 
+-- ======================================================================
+\warn '== 14. respostas prontas (013) =='
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ua', false);
+INSERT INTO macros (tenant_id, title, body) VALUES (:'ta', 'Saudação', 'Olá! Recebemos seu chamado.');
+SELECT app_set_context(:'ta', :'ug', false);
+SELECT tst.ok((SELECT count(*) FROM macros) = 1, 'agente lê as respostas prontas');
+SELECT tst.expect_error(format('INSERT INTO macros (tenant_id, title, body) VALUES (%L, ''x'', ''y'')', :'ta'), '42501', 'agente não cria resposta pronta');
+SELECT app_set_context(:'ta', :'ur1', false);
+SELECT tst.ok((SELECT count(*) FROM macros) = 0, 'cliente não vê respostas prontas');
+SELECT app_set_context(:'tb', :'ub', false);
+SELECT tst.ok((SELECT count(*) FROM macros) = 0, 'outro tenant não vê respostas prontas');
+RESET ROLE;
+
 -- ---------- limpeza ----------
 SELECT delete_tenant(id) FROM tenants WHERE slug IN ('t-alpha', 't-beta');
 DELETE FROM users   WHERE email LIKE '%.test.local';

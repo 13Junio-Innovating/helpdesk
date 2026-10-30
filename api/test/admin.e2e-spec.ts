@@ -185,6 +185,17 @@ describe('Catálogo, equipe, convites, KB, relatórios e tenant (e2e)', () => {
       await http().get('/api/v1/catalog/automation-rules').set(auth(agent)).expect(200);
     });
 
+    it('respostas prontas: admin cria, equipe lê, cliente não vê', async () => {
+      const m = await http().post('/api/v1/catalog/macros').set(auth(admin)).send({ title: 'Pedir print', body: 'Pode enviar um print da tela de erro?' }).expect(201);
+      expect(m.body).toMatchObject({ title: 'Pedir print' });
+      await http().post('/api/v1/catalog/macros').set(auth(agent)).send({ title: 'X', body: 'Y' }).expect(403);
+      expect((await http().get('/api/v1/catalog/macros').set(auth(agent)).expect(200)).body.map((x: { title: string }) => x.title)).toEqual(['Pedir print']);
+      await http().get('/api/v1/catalog/macros').set(auth(cli)).expect(403);
+      await http().post('/api/v1/catalog/macros').set(auth(admin)).send({ title: 'Pedir print', body: 'dup' }).expect(409);
+      await http().patch(`/api/v1/catalog/macros/${m.body.id}`).set(auth(admin)).send({ body: 'Envie um print, por favor.' }).expect(200);
+      await http().delete(`/api/v1/catalog/macros/${m.body.id}`).set(auth(admin)).expect(204);
+    });
+
     it('membros de fila: só equipe ativa', async () => {
       const queues = (await http().get('/api/v1/catalog/queues').set(auth(admin)).expect(200)).body;
       const qid = queues[0].id;
@@ -356,6 +367,8 @@ describe('Catálogo, equipe, convites, KB, relatórios e tenant (e2e)', () => {
       await http().post('/api/v1/kb').set(auth(cli)).send({ title: 'x' }).expect(403);
       await http().patch(`/api/v1/kb/${published.id}`).set(auth(cli)).send({ title: 'x' }).expect(403);
 
+      expect((await http().get(`/api/v1/kb/id/${published.id}`).set(auth(agent)).expect(200)).body.slug).toBe('como-trocar-as-senhas-da-vpn');
+      await http().get(`/api/v1/kb/id/${published.id}`).set(auth(cli)).expect(403);
       const edited = await http().patch(`/api/v1/kb/${published.id}`).set(auth(agent)).send({ title: 'Trocar senha da VPN' }).expect(200);
       expect(edited.body.slug).toBe('como-trocar-as-senhas-da-vpn'); // slug estável
       const archived = await http().patch(`/api/v1/kb/${published.id}`).set(auth(agent)).send({ status: 'archived' }).expect(200);

@@ -90,6 +90,13 @@ export const RESOURCES = {
     order: 'event, position, name',
     validate: (dto) => validateAutomation(dto as { conditions?: unknown[]; actions?: unknown[] }),
   },
+  macros: {
+    table: 'macros',
+    label: 'a resposta pronta',
+    columns: [['title', 'title'], ['body', 'body']],
+    select: 'id, title, body, updated_at AS "updatedAt"',
+    order: 'title',
+  },
 } satisfies Record<string, CatalogResource>;
 
 export type ResourceName = keyof typeof RESOURCES;

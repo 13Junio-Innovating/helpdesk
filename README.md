@@ -55,6 +55,8 @@ web/                  Vite + React 18 + TS (React Router 7, TanStack Query, RHF 
   src/auth/             sessão (restaura pelo cookie ao abrir), guardas por papel
   src/pages/public/     entrar (com seletor de workspace), cadastro, esqueci/redefinir senha, convite, conta suspensa
   src/pages/portal/     portal do cliente: meus chamados, abrir chamado (sugere artigos da KB), conversa, central de ajuda
+  src/pages/staff/      painel da equipe: dashboard, chamados (visões salvas, lote, atalhos), detalhe, novo chamado,
+                        base de conhecimento (Markdown), clientes/organizações, configurações (admin)
   e2e/                  Playwright contra a stack real
 api/                  NestJS 12 (ESM) + pg puro
   src/common/db/        DbService: withTenant() / withoutTenant() — único caminho para o banco
@@ -79,6 +81,7 @@ db/
                       006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
                       010 sessões (refresh com rotação) + reset de senha
                       011 e-mail de convite pela outbox · 012 estado do worker (automation_runs, sla_alerts)
+                      013 respostas prontas (macros)
   seed/dev.sql        dados de demonstração
   tests/              suíte SQL (60 asserções) que roda como sd_app/sd_worker de verdade
 ```
@@ -203,6 +206,20 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
   - Telas autenticadas são carregadas sob demanda.
   - Na KB, a busca casa **qualquer** termo relevante, ordenando por relevância, porque o cliente digita frases inteiras. A busca de chamados continua exigindo todos os termos.
   - API e front usam **um único Vite (8.x)**. Com o Vite 6 hoisted, o Vitest compilava sem `emitDecoratorMetadata` e a injeção do Nest quebrava.
+- **Painel da equipe**:
+  - **Lista de chamados**:
+    - Filtros vão para a URL (link compartilhável). Visões salvas: Meus abertos, Sem responsável, SLA vencido, Aguardando cliente, Todos abertos.
+    - Ações em lote num único `POST /tickets/bulk`.
+    - Atalhos: `j`/`k`, `Enter`/`o`, `x`, `/`, `n`, `?`.
+    - Atualização a cada 30 s.
+  - **Selo de SLA**: mostra o cronômetro mais urgente (estourado > o que vence primeiro > pausado). Verde > 2 h, amarelo ≤ 2 h, vermelho estourado, sempre com ícone e texto.
+  - **Editor de mensagem**:
+    - Começa em **Nota interna** e volta para ela após cada envio.
+    - "Resposta pública" mostra o nome e o e-mail do destinatário, e o botão vira "Enviar ao cliente".
+  - **Alterações no chamado**: status com UI otimista e rollback se a API recusar (coberto por teste com falha simulada).
+  - **Configurações**: só admin. A tela esconde a seção e a API/RLS bloqueia de fato.
+  - **Gráficos**: SVG próprio, sem biblioteca. Cores das séries validadas para daltonismo e contraste nos dois temas (`--color-series-*`), com legenda, tooltip e "Ver como tabela".
+  - **Respostas prontas**: tabela `macros` (migration 013), em que a equipe lê e o admin edita. No navegador elas não seriam compartilhadas, e em `kb_articles` misturariam texto interno com conteúdo do cliente.
 - Erros de validação: `{ code: 'validation_failed', details: [{ field, message }] }` em pt-BR.
 - Stack: NestJS 12 (ESM), vitest (template oficial do Nest 12), pg sem ORM, zod para validar o env, pino com `requestId`
   e redação de `authorization`/`cookie`/senhas/tokens.

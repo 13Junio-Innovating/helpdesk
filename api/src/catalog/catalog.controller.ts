@@ -6,7 +6,7 @@ import { AppException } from '../common/errors/app-exception.js';
 import { CatalogAdminService } from './catalog-admin.service.js';
 import {
   CreateAutomationRuleDto, CreateBusinessHoursDto, CreateCategoryDto, CreateHolidayDto, CreatePriorityDto, CreateQueueDto,
-  CreateSlaPolicyDto, CreateStatusDto, SetQueueMembersDto, SetSlotsDto, UpdateAutomationRuleDto, UpdateBusinessHoursDto,
+  CreateMacroDto, CreateSlaPolicyDto, CreateStatusDto, UpdateMacroDto, SetQueueMembersDto, SetSlotsDto, UpdateAutomationRuleDto, UpdateBusinessHoursDto,
   UpdateCategoryDto, UpdatePriorityDto, UpdateQueueDto, UpdateSlaPolicyDto, UpdateStatusDto,
 } from './dto/catalog.dto.js';
 
@@ -81,4 +81,10 @@ export class CatalogController {
   @Roles('admin') @Post('automation-rules') createRule(@CurrentTenantUser() u: U, @Body() d: CreateAutomationRuleDto) { return this.c.create(u, 'automationRules', d); }
   @Roles('admin') @Patch('automation-rules/:id') updateRule(@CurrentTenantUser() u: U, @Param('id', uuid) id: string, @Body() d: UpdateAutomationRuleDto) { return this.c.update(u, 'automationRules', id, d); }
   @Roles('admin') @Delete('automation-rules/:id') @HttpCode(204) removeRule(@CurrentTenantUser() u: U, @Param('id', uuid) id: string) { return this.c.remove(u, 'automationRules', id); }
+
+  // ---------- respostas prontas ----------
+  @Roles('admin', 'agent') @Get('macros') listMacros(@CurrentTenantUser() u: U) { return this.c.list(u, 'macros'); }
+  @Roles('admin') @Post('macros') createMacro(@CurrentTenantUser() u: U, @Body() d: CreateMacroDto) { return this.c.create(u, 'macros', d); }
+  @Roles('admin') @Patch('macros/:id') updateMacro(@CurrentTenantUser() u: U, @Param('id', uuid) id: string, @Body() d: UpdateMacroDto) { return this.c.update(u, 'macros', id, d); }
+  @Roles('admin') @Delete('macros/:id') @HttpCode(204) removeMacro(@CurrentTenantUser() u: U, @Param('id', uuid) id: string) { return this.c.remove(u, 'macros', id); }
 }

@@ -132,3 +132,10 @@ export class CreateAutomationRuleDto extends NameField {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() active?: boolean;
 }
 export class UpdateAutomationRuleDto extends PartialType(CreateAutomationRuleDto) {}
+
+// ---------- respostas prontas ----------
+export class CreateMacroDto {
+  @ApiProperty() @Transform(trim) @IsString() @MinLength(1) @MaxLength(100) title: string;
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(10_000) body: string;
+}
+export class UpdateMacroDto extends PartialType(CreateMacroDto) {}

@@ -2,10 +2,8 @@ import { expect, test } from '@playwright/test';
 import { apiLogin, call, cleanup, createWorkspace, db, DOMAIN, lastToken, PW, uiLogin, uiLogout } from './support';
 
 test.beforeAll(cleanup);
-test.afterAll(async () => {
-  await cleanup();
-  await db.end();
-});
+// o pool do banco é compartilhado entre os arquivos do mesmo worker: não fechar aqui
+test.afterAll(cleanup);
 
 test.describe('Portal do cliente', () => {
   test('fluxo completo: convite → login → abrir chamado → ver resposta → responder', async ({ page }) => {
@@ -89,7 +87,8 @@ test.describe('Portal do cliente', () => {
     await page.getByLabel('Senha').fill(PW);
     await page.getByRole('button', { name: 'Criar workspace' }).click();
     await expect(page).toHaveURL(/\/painel$/);
-    await expect(page.getByRole('heading', { name: 'Olá, Paula' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Menu da conta' })).toContainText('Paula Padeira');
     const { rows } = await db.query(`SELECT status, trial_ends_at > now() + interval '13 days' AS trial FROM tenants WHERE slug = 'e2e-padaria'`);
     expect(rows[0]).toEqual({ status: 'trial', trial: true });
 

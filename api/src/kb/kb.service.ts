@@ -88,6 +88,10 @@ export class KbService {
     });
   }
 
+  getById(user: TenantUser, id: string): Promise<KbArticle> {
+    return this.db.withTenant(tenantCtx(user), (tx) => this.fetch(tx, 'a.id = $1', id));
+  }
+
   getBySlug(user: TenantUser, slug: string): Promise<KbArticle> {
     return this.db.withTenant(tenantCtx(user), (tx) => this.fetch(tx, 'a.slug = $1', slug));
   }
