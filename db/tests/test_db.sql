@@ -297,6 +297,25 @@ RESET ROLE;
 SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template = 'invitation' AND to_email = 'convidado@alpha.test.local'
                  AND payload->>'token' = 'raw-conv' AND payload->>'tenant_name' = 'Alpha Ltda') = 1, 'convite enfileirado com dados do workspace');
 
+-- ======================================================================
+\warn '== 13. estado do worker (012) =='
+SET ROLE sd_worker;
+SELECT id AS ev1 FROM ticket_events WHERE ticket_id = :'t1' ORDER BY id LIMIT 1 \gset
+INSERT INTO automation_runs (event_id, tenant_id, rules_matched) VALUES (:ev1, :'ta', 1);
+SELECT tst.expect_error(format('INSERT INTO automation_runs (event_id, tenant_id) VALUES (%s, %L)', :ev1, :'ta'), '23505', 'evento só é processado uma vez');
+WITH ins AS (INSERT INTO automation_runs (event_id, tenant_id) VALUES (:ev1, :'ta') ON CONFLICT DO NOTHING RETURNING 1)
+SELECT tst.ok((SELECT count(*) FROM ins) = 0, 'ON CONFLICT permite reivindicar sem erro');
+SELECT id AS tm1 FROM sla_timers WHERE ticket_id = :'t2' LIMIT 1 \gset
+INSERT INTO sla_alerts (timer_id, tenant_id) VALUES (:'tm1', :'ta');
+WITH ins AS (INSERT INTO sla_alerts (timer_id, tenant_id) VALUES (:'tm1', :'ta') ON CONFLICT DO NOTHING RETURNING 1)
+SELECT tst.ok((SELECT count(*) FROM ins) = 0, 'alerta de SLA registrado uma única vez por cronômetro');
+RESET ROLE;
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ua', false);
+SELECT tst.expect_error('SELECT * FROM automation_runs', '42501', 'API não lê o estado do worker');
+SELECT tst.expect_error('SELECT * FROM sla_alerts', '42501', 'API não lê alertas de SLA');
+RESET ROLE;
+
 -- ---------- limpeza ----------
 SELECT delete_tenant(id) FROM tenants WHERE slug IN ('t-alpha', 't-beta');
 DELETE FROM users   WHERE email LIKE '%.test.local';
