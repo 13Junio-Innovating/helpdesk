@@ -29,6 +29,29 @@ export async function cleanup(db: pg.Pool): Promise<void> {
   await db.query(`DELETE FROM memberships WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`%@${E2E_DOMAIN}`]);
   await db.query(`DELETE FROM users WHERE email LIKE $1`, [`%@${E2E_DOMAIN}`]);
   await db.query(`DELETE FROM email_outbox WHERE to_email LIKE $1`, [`%@${E2E_DOMAIN}`]);
+  await db.query(`DELETE FROM plans WHERE id LIKE 'e2e-%'`);
+}
+
+/** Cria usuário + membership direto no banco (até existir convite via API). Senha bcrypt via pgcrypto. */
+export async function addMember(
+  db: pg.Pool,
+  tenantId: string,
+  email: string,
+  role: 'admin' | 'agent' | 'requester',
+  opts: { name?: string; password?: string; organizationId?: string } = {},
+): Promise<string> {
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, crypt($3, gen_salt('bf', 10))) RETURNING id`,
+    [email, opts.name ?? email.split('@')[0], opts.password ?? 'senha-123456'],
+  );
+  const id = rows[0]!.id;
+  await db.query(`INSERT INTO memberships (tenant_id, user_id, role, organization_id) VALUES ($1, $2, $3, $4)`, [
+    tenantId,
+    id,
+    role,
+    opts.organizationId ?? null,
+  ]);
+  return id;
 }
 
 export const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');

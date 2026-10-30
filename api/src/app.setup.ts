@@ -1,4 +1,4 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
+import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import type { Env } from './config/env.js';
+import { createValidationPipe } from './common/validation/validation.js';
 
 /** Configuração HTTP compartilhada entre main.ts e os testes e2e (os testes exercitam o mesmo pipeline). */
 export function configureApp(app: NestExpressApplication): INestApplication {
@@ -24,7 +25,7 @@ export function configureApp(app: NestExpressApplication): INestApplication {
     credentials: true,
   });
   app.setGlobalPrefix('api/v1', { exclude: ['docs'] });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  app.useGlobalPipes(createValidationPipe());
   app.enableShutdownHooks();
 
   if (config.get('NODE_ENV', { infer: true }) !== 'production') {
