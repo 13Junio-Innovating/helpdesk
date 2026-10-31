@@ -8,10 +8,10 @@ Você vai construir as **etapas 2 e 3** de um SaaS de service desk (help desk mu
 
 ## 0. Antes de escrever qualquer código
 
-1. Leia `README.md` e TODOS os arquivos de `db/migrations/*.sql` (001 a 009), `db/seed/dev.sql` e `db/tests/test_db.sql`. O banco é a fonte da verdade: regras de negócio, segurança e SLA já moram nele. **Não reimplemente na API o que o banco já faz** (numeração, SLA, auditoria, outbox, limites do plano, defaults).
+1. Leia `README.md` e TODOS os arquivos de `db/migrations/*.sql` (001 a 012), `db/seed/dev.sql` e `db/tests/test_db.sql`. O banco é a fonte da verdade: regras de negócio, segurança e SLA já moram nele. **Não reimplemente na API o que o banco já faz** (numeração, SLA, auditoria, outbox, limites do plano, defaults).
 2. Suba o ambiente e confirme que está verde antes de mexer em qualquer coisa:
    `docker compose up -d && cp .env.example .env && ./db/dev-reset.sh && ./db/tests/run.sh` (deve terminar com "TODOS OS TESTES PASSARAM").
-3. **Não altere migrations já existentes (001–009).** Se precisar mudar o banco, crie `010_*.sql` em diante, rode `./db/migrate.sh` e adicione testes em `db/tests/test_db.sql`. Antes de criar uma migration, diga por que a API não resolve sem ela.
+3. **Não altere migrations já existentes (001–012).** Se precisar mudar o banco, crie `013_*.sql` em diante, rode `./db/migrate.sh` e adicione testes em `db/tests/test_db.sql`. Antes de criar uma migration, diga por que a API não resolve sem ela.
 4. Trabalhe por fases (seção 6). Ao fim de cada fase: rode os testes, faça um commit com mensagem clara e me mostre um resumo curto do que ficou pronto e do que ficou de fora. Não avance se a fase atual não passar nos critérios de aceite.
 
 ## 1. Contrato de segurança com o banco (o ponto mais crítico)
@@ -45,7 +45,11 @@ Nunca devolva `SQLERRM`/stack ao cliente; logue no servidor e devolva `{ code, m
 - Cadastro: `signup_tenant(name, slug, email, admin_name, password_hash)` → `(out_tenant_id, out_user_id)`; `create_tenant_for_user(user, name, slug)`.
 - Login: `auth_get_user_by_email(email)` → `(id, email, name, password_hash, disabled)`; `auth_list_memberships(user)`; `auth_touch_login(user)`; `auth_set_password(user, hash)`; `tenant_by_slug(slug)`.
 - Convites: insira em `invitations` (como admin) guardando **apenas o hash SHA-256 do token** em `token_hash`; `accept_invitation(token_hash, name, password_hash)` → `(out_tenant_id, out_user_id)`.
-- Worker: `sla_mark_breaches()` (rodar a cada minuto), `delete_tenant(uuid)`.
+- Sessões: `auth_issue_refresh(user, tenant, token_hash, ttl)` → family_id; `auth_rotate_refresh(old_hash, new_hash, ttl)` → `(status, user_id, tenant_id, family_id)` com `status ∈ ok|reused|invalid` (em `reused` o banco já revogou a sessão inteira: responda 401 e limpe o cookie); `auth_revoke_refresh(hash)` (logout); `auth_revoke_all_refresh(user)`.
+- Recuperação de senha: `auth_request_password_reset(email, token_hash)` → 0 ou 1 linha `(out_user_id, out_email, out_name)` (a API envia o e-mail e responde **sempre igual**); `auth_reset_password(token_hash, new_password_hash)` → boolean (uso único, 1 h, revoga sessões).
+- Relatórios: `report_overview(from, to)` → `jsonb` pronto para o dashboard (só equipe; respeita a RLS). Não recalcule isso na API.
+- Tabelas `macros` (respostas prontas) e `saved_views` (filtros salvos): CRUD direto via `sd_app`; a RLS cuida de dono/compartilhado.
+- Worker: `sla_mark_breaches()` (a cada minuto), `auth_purge_expired()` (1x/dia), `delete_tenant(uuid)`.
 - SLA: view `v_ticket_sla (ticket_id, kind, due_at, state, minutes_remaining)` com `state ∈ running|paused|met|met_late|breached`.
 
 **Triggers que já fazem o trabalho** (não duplique): número sequencial do chamado por tenant; status/prioridade/organização/fila padrão; cliente (`requester`) não consegue definir status, prioridade, fila nem responsável; criação e recálculo dos cronômetros de SLA (em minutos úteis, pausa em status com `sla_pauses`); primeira resposta; resposta do cliente reabre "Aguardando cliente"/"Resolvido"; auditoria em `ticket_events`; e-mails enfileirados em `email_outbox`; limites de agentes e de chamados por plano; tenant suspenso não abre chamado.
@@ -65,9 +69,9 @@ Nunca devolva `SQLERRM`/stack ao cliente; logue no servidor e devolva `{ code, m
 **Auth (duas etapas, pois um usuário pode pertencer a vários workspaces):**
 1. `POST /auth/login {email, password}` → valida com `auth_get_user_by_email` (bcrypt; rejeite `disabled`; tempo de resposta uniforme mesmo se o e-mail não existir) → devolve token curto **sem tenant** + lista de workspaces (`auth_list_memberships`). Se houver um único workspace, já devolva o token com tenant.
 2. `POST /auth/select-tenant {tenantId}` → confirma o membership e devolve o JWT final `{sub: userId, tid: tenantId}`.
-- Access token curto (15 min) + refresh token em cookie `httpOnly; Secure; SameSite=Lax` com rotação. `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` (usuário, tenant, papel, plano, status do trial).
+- Access token curto (15 min) + refresh token em cookie `httpOnly; Secure; SameSite=Lax` com rotação via `auth_rotate_refresh`. `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all`, `GET /auth/me` (usuário, tenant, papel, plano, status do trial).
 - `POST /auth/signup {workspaceName, slug, name, email, password}` usa `signup_tenant`. Valide slug (`^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`, não reservado: `www api admin app`), senha mínima 8, e e-mail normalizado em minúsculas.
-- `POST /auth/accept-invite {token, name, password}`; `POST /auth/forgot-password` e `POST /auth/reset-password` (token de uso único, só o hash no banco — se precisar de tabela, crie migration `010`; resposta idêntica exista o e-mail ou não).
+- `POST /auth/accept-invite {token, name, password}`; `POST /auth/forgot-password` e `POST /auth/reset-password` (use as funções `auth_request_password_reset` / `auth_reset_password`; resposta idêntica exista o e-mail ou não; gere o token com `crypto.randomBytes` e guarde só o SHA-256).
 - Rate limit forte em login/signup/forgot (por IP e por e-mail).
 - Guards: `JwtAuthGuard` global (com `@Public()` para exceções) e `@Roles('admin','agent')` apenas como **primeira barreira**; a decisão final é da RLS.
 
@@ -79,7 +83,8 @@ Nunca devolva `SQLERRM`/stack ao cliente; logue no servidor e devolva `{ code, m
 - **Catálogo (admin):** CRUD de `queues`, `categories`, `priorities`, `statuses`, `business_hours` (+ faixas e feriados), `sla_policies`, `automation_rules`; leitura de status/prioridades/categorias liberada a todos.
 - **Equipe e clientes:** `GET/PATCH /members` (papel, ativo), `POST /invitations`, `GET /organizations` + CRUD, `GET /agents`.
 - **Base de conhecimento:** CRUD de `kb_articles` (equipe), `GET /kb` (busca full-text; cliente só vê `published` + `portal`), `GET /kb/:slug`. Slug único por tenant (gere a partir do título).
-- **Relatórios:** `GET /reports/overview` (abertos por status, vencidos, tempo médio de primeira resposta e de resolução, % SLA cumprido, chamados por dia nos últimos 30 dias, por agente, por categoria, horas apontadas). Calcule em SQL agregado.
+- **Relatórios:** `GET /reports/overview?from=&to=` apenas repassa `report_overview(from, to)` (já traz abertos por status, vencidos, tempos médios, % SLA cumprido, série diária, por agente/categoria/prioridade e horas apontadas). Valide o período (máx. 366 dias) e converta erro `22023` em 400.
+- **Macros e visões salvas:** CRUD de `/macros` e `/saved-views` (equipe). No editor de resposta, aplique a macro substituindo variáveis como `{{solicitante.nome}}` no servidor.
 - **Conta/plano:** `GET /tenant` (plano, uso de agentes e de chamados no mês, trial), `PATCH /tenant`.
 - **Cobrança (fase final):** `POST /billing/checkout` e `POST /billing/webhook/:provider` (Asaas e/ou Stripe; abstraia atrás de uma interface). O webhook usa `sd_worker`, **valida a assinatura/token do provedor**, é **idempotente** via `billing_events (provider, event_id)` e atualiza `subscriptions`/`tenants.status/plan_id`. Sem credenciais, deixe um provedor `fake` para dev.
 - `GET /health` (checa o banco) e `GET /health/ready`.
@@ -88,6 +93,7 @@ Nunca devolva `SQLERRM`/stack ao cliente; logue no servidor e devolva `{ code, m
 - A cada minuto: `SELECT sla_mark_breaches()` e log do total.
 - Consumidor da `email_outbox`: reserve linhas com `SELECT ... WHERE status IN ('pending','failed') AND scheduled_at <= now() ORDER BY id FOR UPDATE SKIP LOCKED LIMIT n`, marque `sending`, renderize o template (`ticket_created`, `ticket_reply`, ...), envie via SMTP (nodemailer; Mailpit no `docker-compose` para dev), marque `sent` ou `failed` com `attempts + 1`, `last_error` e backoff exponencial; desista após N tentativas. Seguro para rodar em várias instâncias.
 - **Avaliador de automações:** consuma eventos novos de `ticket_events`/chamados criados e aplique `automation_rules` (condições/ações em JSON; ações: `assign_queue`, `assign_agent`, `set_priority`, `add_tag`, `notify_staff`). Comece com poucos operadores (`eq`, `in`, `contains`) e documente o formato. Evite loops (uma regra não dispara a si mesma em cascata).
+- Limpeza diária: `SELECT auth_purge_expired()`.
 - Alertas de SLA próximo do vencimento (ex.: 80% do prazo) via e-mail para o responsável.
 
 **Qualidade da API:** logs estruturados (pino) com `requestId`, sem dados sensíveis; CORS restrito à origem do front; `helmet`; tamanho máximo de body; nunca logar senhas, tokens ou `password_hash`.
@@ -99,8 +105,8 @@ Nunca devolva `SQLERRM`/stack ao cliente; logue no servidor e devolva `{ code, m
 **Duas experiências no mesmo app, decididas pelo papel retornado em `/auth/me`:**
 
 *Painel da equipe (`admin`/`agent`):*
-- **Chamados**: tabela com filtros salvos ("Meus abertos", "Sem responsável", "SLA vencido", "Aguardando cliente"), busca, ordenação, paginação, seleção múltipla com ações em lote, atalhos de teclado, atualização periódica (polling leve ou SSE). Badges de prioridade e de SLA (tempo restante em verde/amarelo/vermelho, "pausado", "estourado").
-- **Detalhe do chamado**: linha do tempo unificada (mensagens públicas, notas internas destacadas, eventos de auditoria), editor de resposta com alternância clara **"Resposta pública" × "Nota interna"** (padrão seguro: pública só após confirmação visual do destinatário), troca de status/prioridade/responsável/fila/categoria/tags inline, cronômetros de SLA, apontamento de horas, anexos (arrastar e soltar com progresso), respostas prontas (macros) e artigos da KB sugeridos/inseríveis.
+- **Chamados**: tabela com filtros salvos (de `/saved-views`; "Meus abertos", "Sem responsável", "SLA vencido", "Aguardando cliente"), busca, ordenação, paginação, seleção múltipla com ações em lote, atalhos de teclado, atualização periódica (polling leve ou SSE). Badges de prioridade e de SLA (tempo restante em verde/amarelo/vermelho, "pausado", "estourado").
+- **Detalhe do chamado**: linha do tempo unificada (mensagens públicas, notas internas destacadas, eventos de auditoria), editor de resposta com alternância clara **"Resposta pública" × "Nota interna"** (padrão seguro: pública só após confirmação visual do destinatário), troca de status/prioridade/responsável/fila/categoria/tags inline, cronômetros de SLA, apontamento de horas, anexos (arrastar e soltar com progresso), respostas prontas (macros, de `/macros`) e artigos da KB sugeridos/inseríveis.
 - **Novo chamado** (em nome de um cliente), **Dashboard** (cards + gráficos de `/reports/overview`), **Base de conhecimento** (editor Markdown com preview), **Clientes/Organizações**, **Configurações** (equipe e convites, filas, categorias, prioridades, status, horário comercial e feriados, políticas de SLA, automações, plano e uso).
 
 *Portal do cliente (`requester`):* **Meus chamados** (lista simples), **Abrir chamado** (assunto, descrição, categoria, anexos; sem campos de prioridade/responsável), **detalhe** com a conversa pública e resposta, e **busca na KB** (sugerir artigos enquanto digita o assunto, antes de enviar). O cliente nunca vê nota interna, auditoria nem cronômetros.
@@ -137,7 +143,7 @@ Faça nesta ordem, uma fase por vez, com commit ao final de cada uma.
 ## 7. Regras de trabalho (importante)
 
 - **Teste de verdade.** Suba o Postgres, rode a API e exercite os endpoints (e2e/supertest e, no front, Playwright). Se algo não puder ser testado, diga explicitamente — nunca declare "funcionando" sem executar.
-- Não invente colunas, funções ou tabelas: confira nas migrations. Se faltar algo, proponha uma migration `010+` com teste, em vez de contornar na API.
+- Não invente colunas, funções ou tabelas: confira nas migrations. Se faltar algo, proponha uma migration `013+` com teste, em vez de contornar na API.
 - Segurança primeiro: qualquer atalho que pule `withTenant`, use `sd_worker` em rota de usuário, ou concatene SQL com entrada do usuário é **bug bloqueante**. Sempre queries parametrizadas.
 - Não adicione dependências sem necessidade; fixe versões; rode `npm audit` e relate o que for crítico.
 - Código pequeno, tipado e legível; um módulo por domínio; nada de `any` sem justificativa; comentários só onde o porquê não é óbvio.

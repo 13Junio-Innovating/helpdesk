@@ -10,7 +10,7 @@ base de conhecimento, apontamento de horas, automações, planos e limites).
 ```bash
 docker compose up -d            # Postgres 16 (ou use um Postgres local)
 cp .env.example .env
-./db/dev-reset.sh               # drop + roles + 9 migrations + seed
+./db/dev-reset.sh               # drop + roles + 12 migrations + seed
 PGSUPER_DB_URL=postgresql://postgres:pg_dev_pw@127.0.0.1:5432/helpdesk ./db/tests/run.sh
 ```
 
@@ -24,8 +24,9 @@ db/
   migrate.sh          aplica db/migrations/*.sql uma vez cada (tabela schema_migrations)
   migrations/         001 tipos · 002 tenancy · 003 catálogo+SLA · 004 chamados · 005 KB/outbox
                       006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
+                      010 refresh tokens+reset de senha · 011 macros+visões salvas · 012 relatórios
   seed/dev.sql        dados de demonstração
-  tests/              suíte SQL (60 asserções) que roda como sd_app/sd_worker de verdade
+  tests/              suíte SQL (106 asserções) que roda como sd_app/sd_worker de verdade
 ```
 
 ## Segurança multi-tenant (o ponto mais importante)
@@ -63,6 +64,13 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
 - **Auditoria** somente-inserção (`ticket_events`) e **outbox transacional** de e-mail (`email_outbox`).
 - **Planos**: limite de agentes e de chamados/mês; tenant suspenso não abre chamados.
 - Cadastro self-service (`signup_tenant`), convites (`accept_invitation`), login (`auth_*`), `delete_tenant` (LGPD).
+- **Sessões**: refresh tokens com rotação e detecção de reuso (`auth_issue_refresh`, `auth_rotate_refresh` → `ok|reused|invalid`;
+  reuso revoga a sessão inteira), logout, "sair de todos" e limpeza (`auth_purge_expired`, worker). Só o hash SHA-256 dos tokens é guardado.
+- **Recuperação de senha**: `auth_request_password_reset` (1 h de validade, pedido novo invalida o anterior) e `auth_reset_password`
+  (uso único; revoga as sessões abertas).
+- **Macros** (respostas prontas) e **visões salvas** de filtros, por dono, com opção de compartilhar com a equipe.
+- **Relatórios**: `report_overview(from, to)` devolve um JSON com abertos por status, SLA estourado, tempos médios, % de SLA cumprido,
+  série diária, por agente/categoria/prioridade e horas apontadas — respeita a RLS (só equipe, só o próprio tenant).
 
 ## Decisões e limitações conhecidas
 
@@ -70,6 +78,7 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
 - `password_hash`: gere com bcrypt/argon2 na API. O seed usa bcrypt (`$2a$`).
 - Busca textual (`portuguese`) e trigram em `tickets.subject`; sem `unaccent` aplicado ainda.
 - Não há tabela de campos customizados (usa-se `tickets.custom_fields jsonb`), nem caixas de e-mail de entrada, nem CMDB/field service — ficam para depois do MVP.
+- Tempos médios do relatório são em minutos corridos (não úteis).
 - Testado em PostgreSQL 16.15 local. O `docker-compose.yml` não foi executado neste ambiente.
 
 ## Próximas etapas

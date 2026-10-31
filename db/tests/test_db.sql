@@ -223,7 +223,7 @@ SET ROLE sd_worker;
 SELECT sla_mark_breaches() AS n \gset
 SELECT tst.ok(:n >= 1, 'sla_mark_breaches marcou chamados vencidos');
 SELECT tst.ok((SELECT count(*) FROM ticket_events WHERE ticket_id = :'t2' AND event_type = 'sla_breached') = 1, 'estouro registrado na auditoria');
-SELECT tst.ok(sla_mark_breaches() = 0 OR true, 'segunda execução não duplica') ;
+SELECT tst.ok(sla_mark_breaches() = 0, 'segunda execução não duplica estouros já marcados');
 SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE tenant_id = :'ta' AND template = 'ticket_created') >= 3, 'outbox: confirmação de abertura enfileirada');
 SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE tenant_id = :'ta' AND template = 'ticket_reply') = 1, 'outbox: resposta da equipe enfileirada');
 RESET ROLE;
@@ -231,6 +231,144 @@ SET ROLE sd_app;
 SELECT app_set_context(:'ta', :'ua', false);
 SELECT tst.expect_error('SELECT * FROM email_outbox', '42501', 'API não acessa a outbox');
 SELECT tst.expect_error('SELECT sla_mark_breaches()', '42501', 'API não executa rotinas do worker');
+RESET ROLE;
+
+-- ======================================================================
+\warn '== 11. sessões (refresh tokens) e recuperação de senha =='
+SET ROLE sd_app;
+SELECT app_set_context(NULL, NULL, false);
+SELECT tst.expect_error('SELECT * FROM refresh_tokens', '42501', 'API não lê refresh_tokens diretamente');
+SELECT tst.expect_error('SELECT * FROM password_resets', '42501', 'API não lê password_resets diretamente');
+
+SELECT auth_issue_refresh(:'ua', :'ta', 'rt-1') AS fam \gset
+SELECT tst.expect_error(format('SELECT auth_issue_refresh(%L, %L, ''rt-x'')', :'ua', :'tb'),
+                        '42501', 'não emite sessão para workspace do qual o usuário não é membro');
+
+SELECT * FROM auth_rotate_refresh('rt-1', 'rt-2') \gset r_
+SELECT tst.ok(:'r_status' = 'ok' AND :'r_user_id' = :'ua' AND :'r_tenant_id' = :'ta' AND :'r_family_id' = :'fam',
+              'rotação devolve usuário, workspace e a mesma família');
+SELECT status AS st FROM auth_rotate_refresh('rt-1', 'rt-3') \gset
+SELECT tst.ok(:'st' = 'reused', 'reuso de token já rotacionado é detectado');
+SELECT status AS st FROM auth_rotate_refresh('rt-2', 'rt-4') \gset
+SELECT tst.ok(:'st' <> 'ok', 'detecção de reuso revoga a sessão inteira (o token novo também morre)');
+SELECT status AS st FROM auth_rotate_refresh('nao-existe', 'rt-5') \gset
+SELECT tst.ok(:'st' = 'invalid', 'token desconhecido é inválido');
+
+SELECT auth_issue_refresh(:'ua', :'ta', 'rt-exp', interval '-1 second') IS NOT NULL AS issued \gset
+SELECT status AS st FROM auth_rotate_refresh('rt-exp', 'rt-6') \gset
+SELECT tst.ok(:'st' = 'invalid', 'refresh token expirado é inválido');
+
+SELECT auth_issue_refresh(:'ua', :'ta', 'rt-logout') IS NOT NULL AS issued \gset
+SELECT auth_revoke_refresh('rt-logout');
+SELECT status AS st FROM auth_rotate_refresh('rt-logout', 'rt-7') \gset
+SELECT tst.ok(:'st' <> 'ok', 'logout revoga a sessão');
+
+SELECT auth_issue_refresh(:'ua', :'ta', 'rt-a') IS NOT NULL AS issued \gset
+SELECT auth_issue_refresh(:'ua', NULL,  'rt-b') IS NOT NULL AS issued \gset
+SELECT tst.ok(auth_revoke_all_refresh(:'ua') >= 2, 'sair de todos os dispositivos revoga todas as sessões');
+SELECT status AS st FROM auth_rotate_refresh('rt-b', 'rt-8') \gset
+SELECT tst.ok(:'st' <> 'ok', 'sessão sem workspace também foi revogada');
+
+-- usuário desativado perde a sessão no próximo refresh
+SELECT auth_issue_refresh(:'ug', :'ta', 'rt-ug') IS NOT NULL AS issued \gset
+RESET ROLE;
+UPDATE users SET disabled_at = now() WHERE id = :'ug';
+SET ROLE sd_app;
+SELECT status AS st FROM auth_rotate_refresh('rt-ug', 'rt-9') \gset
+SELECT tst.ok(:'st' = 'invalid', 'usuário desativado não renova a sessão');
+SELECT tst.expect_error(format('SELECT auth_issue_refresh(%L, %L, ''rt-ug2'')', :'ug', :'ta'), '42501', 'usuário desativado não abre sessão');
+RESET ROLE;
+UPDATE users SET disabled_at = NULL WHERE id = :'ug';
+
+-- recuperação de senha
+SET ROLE sd_app;
+SELECT count(*) AS n FROM auth_request_password_reset('ninguem@alpha.test.local', 'pr-0') \gset
+SELECT tst.ok(:n = 0, 'e-mail desconhecido não devolve linha (a API responde igual nos dois casos)');
+SELECT count(*) AS n FROM auth_request_password_reset('admin@alpha.test.local', 'pr-1') \gset
+SELECT tst.ok(:n = 1, 'pedido de reset para e-mail existente');
+SELECT count(*) AS n FROM auth_request_password_reset('ADMIN@alpha.test.local', 'pr-2') \gset
+SELECT tst.ok(:n = 1, 'e-mail é case-insensitive');
+SELECT tst.ok(NOT auth_reset_password('pr-1', 'h-x'), 'novo pedido invalida o anterior');
+SELECT auth_issue_refresh(:'ua', :'ta', 'rt-pre-reset') IS NOT NULL AS issued \gset
+SELECT tst.ok(auth_reset_password('pr-2', 'hash-novo'), 'token válido troca a senha');
+SELECT tst.ok((SELECT password_hash FROM auth_get_user_by_email('admin@alpha.test.local')) = 'hash-novo', 'nova senha gravada');
+SELECT tst.ok(NOT auth_reset_password('pr-2', 'h-y'), 'token de reset é de uso único');
+SELECT status AS st FROM auth_rotate_refresh('rt-pre-reset', 'rt-10') \gset
+SELECT tst.ok(:'st' <> 'ok', 'trocar a senha revoga as sessões abertas');
+RESET ROLE;
+INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (:'ua', 'pr-old', now() - interval '1 minute');
+SET ROLE sd_app;
+SELECT tst.ok(NOT auth_reset_password('pr-old', 'h-z'), 'token de reset expirado é recusado');
+
+-- limpeza periódica pelo worker
+RESET ROLE;
+INSERT INTO refresh_tokens (family_id, user_id, token_hash, expires_at)
+VALUES (gen_random_uuid(), :'ua', 'rt-velho', now() - interval '10 days');
+SET ROLE sd_app;
+SELECT tst.expect_error('SELECT auth_purge_expired()', '42501', 'API não executa a limpeza de tokens');
+RESET ROLE;
+SET ROLE sd_worker;
+SELECT auth_purge_expired() AS n \gset
+SELECT tst.ok(:n >= 1, 'worker remove tokens expirados');
+RESET ROLE;
+
+-- ======================================================================
+\warn '== 12. macros, visões salvas e relatórios =='
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ug', false);
+INSERT INTO macros (tenant_id, owner_id, name, body, shared)
+VALUES (:'ta', :'ug', 'Saudação', 'Olá {{solicitante.nome}}!', true) RETURNING id AS m1 \gset
+INSERT INTO macros (tenant_id, owner_id, name, body, shared)
+VALUES (:'ta', :'ug', 'Privada', 'texto', false);
+INSERT INTO saved_views (tenant_id, owner_id, name, filters)
+VALUES (:'ta', :'ug', 'Meus abertos', '{"assignee":"me"}');
+SELECT tst.expect_error(format('INSERT INTO macros (tenant_id, owner_id, name, body) VALUES (%L,%L,''Forjada'',''x'')', :'ta', :'ua'),
+                        '42501', 'agente não cria macro em nome de outra pessoa');
+SELECT tst.expect_error(format('INSERT INTO macros (tenant_id, owner_id, name, body) VALUES (%L,%L,''saudação'',''x'')', :'ta', :'ug'),
+                        '23505', 'nome de macro é único por dono (sem diferenciar maiúsculas)');
+
+SELECT app_set_context(:'ta', :'ug2', false);
+SELECT tst.ok((SELECT count(*) FROM macros) = 1, 'outro agente vê só a macro compartilhada');
+SELECT tst.ok((SELECT count(*) FROM saved_views) = 0, 'visão não compartilhada fica privada');
+WITH u AS (UPDATE macros SET body = 'alterada' WHERE id = :'m1' RETURNING 1)
+SELECT tst.ok((SELECT count(*) FROM u) = 0, 'outro agente não edita macro alheia');
+
+SELECT app_set_context(:'ta', :'ua', false);
+SELECT tst.ok((SELECT count(*) FROM macros) = 2, 'admin vê todas as macros');
+SELECT app_set_context(:'ta', :'ur1', false);
+SELECT tst.ok((SELECT count(*) FROM macros) = 0 AND (SELECT count(*) FROM saved_views) = 0, 'cliente não vê macros nem visões');
+SELECT tst.expect_error(format('INSERT INTO macros (tenant_id, owner_id, name, body) VALUES (%L,%L,''x'',''x'')', :'ta', :'ur1'),
+                        '42501', 'cliente não cria macro');
+
+-- relatórios
+SELECT app_set_context(:'ta', :'ug', false);
+SELECT tst.ok((SELECT worked_on FROM time_entries WHERE ticket_id = :'t1' LIMIT 1)
+              = (now() AT TIME ZONE 'America/Sao_Paulo')::date, 'apontamento usa o dia do fuso do tenant');
+SELECT report_overview() AS rep \gset
+SELECT tst.ok((:'rep'::jsonb->'totals'->>'created')::int = (SELECT count(*) FROM tickets), 'relatório: total criado = chamados do tenant');
+SELECT tst.ok((SELECT sum((x->>'count')::int) FROM jsonb_array_elements(:'rep'::jsonb->'open_by_status') x) = (SELECT count(*) FROM tickets),
+              'relatório: soma por status = total de chamados');
+SELECT tst.ok((SELECT sum((x->>'created')::int) FROM jsonb_array_elements(:'rep'::jsonb->'daily') x) = (:'rep'::jsonb->'totals'->>'created')::int,
+              'relatório: série diária soma o total criado');
+SELECT tst.ok(jsonb_array_length(:'rep'::jsonb->'daily') BETWEEN 30 AND 32, 'relatório: série diária cobre o período');
+SELECT tst.ok((:'rep'::jsonb->'totals'->>'time_logged_minutes')::int = 45, 'relatório: horas apontadas (45 min)');
+SELECT tst.ok((SELECT (x->>'minutes_logged')::int FROM jsonb_array_elements(:'rep'::jsonb->'by_agent') x WHERE x->>'name' = 'Agente') = 45,
+              'relatório: horas por agente');
+SELECT tst.ok((:'rep'::jsonb->'totals'->>'sla_breached_open')::int >= 1, 'relatório: conta SLA estourado em chamados abertos');
+SELECT tst.ok((:'rep'::jsonb->>'avg_first_response_minutes')::numeric >= 0, 'relatório: tempo médio de primeira resposta');
+SELECT tst.ok(:'rep'::jsonb->>'sla_compliance_pct' IS NULL OR (:'rep'::jsonb->>'sla_compliance_pct')::numeric BETWEEN 0 AND 100,
+              'relatório: % de SLA cumprido entre 0 e 100');
+SELECT tst.ok(jsonb_array_length(:'rep'::jsonb->'by_priority') = 4, 'relatório: distribuição por prioridade');
+
+SELECT app_set_context(:'tb', :'ub', false);
+SELECT report_overview() AS rep_b \gset
+SELECT tst.ok((:'rep_b'::jsonb->'totals'->>'created')::int = (SELECT count(*) FROM tickets)
+              AND (:'rep_b'::jsonb->'totals'->>'created')::int < (:'rep'::jsonb->'totals'->>'created')::int,
+              'relatório do tenant B só enxerga dados do tenant B');
+SELECT app_set_context(:'ta', :'ur1', false);
+SELECT tst.expect_error('SELECT report_overview()', '42501', 'cliente não acessa relatórios');
+SELECT app_set_context(:'ta', :'ua', false);
+SELECT tst.expect_error('SELECT report_overview(now(), now() - interval ''1 day'')', '22023', 'período invertido é recusado');
 RESET ROLE;
 
 -- ---------- limpeza ----------
