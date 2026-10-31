@@ -1,6 +1,6 @@
-# Helpdesk SaaS — camada de banco (PostgreSQL 16)
+# Helpdesk SaaS
 
-Etapa 1 de 3: **banco** → API → front React.
+Etapas: **banco** (PostgreSQL 16, pronto) → **API** NestJS (`api/`, em andamento) → front React.
 
 Service desk multi-tenant (chamados, SLA com horário comercial, filas, categorias,
 base de conhecimento, apontamento de horas, automações, planos e limites).
@@ -12,6 +12,14 @@ docker compose up -d            # Postgres 16 (ou use um Postgres local)
 cp .env.example .env
 ./db/dev-reset.sh               # drop + roles + 12 migrations + seed
 PGSUPER_DB_URL=postgresql://postgres:pg_dev_pw@127.0.0.1:5432/helpdesk ./db/tests/run.sh
+```
+
+API (precisa de Node 22+):
+
+```bash
+npm install                     # workspaces da raiz (api/)
+npm run api:dev                 # http://localhost:3000/api/v1  ·  Swagger em http://localhost:3000/docs
+npm run api:test                # unitários + e2e (contra o Postgres real; rode ./db/dev-reset.sh antes)
 ```
 
 Seed: workspace `demo` — `admin@demo.local` / `demo1234` (agentes `carlos@`, `bia@`; clientes `joao@acme.local`, etc.).
@@ -81,7 +89,47 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
 - Tempos médios do relatório são em minutos corridos (não úteis).
 - Testado em PostgreSQL 16.15 local. O `docker-compose.yml` não foi executado neste ambiente.
 
+## API (etapa 2) — `api/`
+
+NestJS 12 (ESM) + TypeScript estrito, `pg` sem ORM, Vitest + Supertest. Prefixo `/api/v1`.
+
+```
+api/src/
+  config/          .env validado com zod (falha no boot se faltar algo)
+  common/db/       DbService: withTenant / withUser / anonymous — única porta para o banco
+  common/auth/     JwtAuthGuard global, RolesGuard, @Public/@Roles/@AllowPreTenant, MembershipService
+  common/errors/   AllExceptionsFilter + tabela SQLSTATE → HTTP ({ code, message })
+  common/http/     rate limit (geral por IP; login/cadastro por IP e por e-mail)
+  health/          GET /health, GET /health/ready
+  auth/            login, select-tenant, workspaces, signup, refresh, logout, logout-all, me
+api/test/          e2e contra o banco de dev (superusuário só para preparar/limpar cenários)
+```
+
+**Auth em duas etapas.** `POST /auth/login` devolve o token final quando o usuário tem um único workspace;
+com vários, devolve `preTenantToken` (5 min, só serve para `/auth/workspaces`, `/auth/select-tenant` e
+`/auth/logout-all`) e a lista. O access token (15 min) leva só `{sub, tid, typ}` e fica em memória no front;
+o refresh vai no cookie `sd_rt` (`httpOnly; SameSite=Lax; Path=/api/v1/auth; Secure` fora de dev).
+
+### Decisões
+
+- **NestJS 12 em ESM** (padrão do `nest new` atual), com Vitest no lugar de Jest, como no template oficial.
+- **Sem ORM, sem `@Tx()` por enquanto**: os serviços chamam `db.withTenant(auth, fn)` explicitamente. Fica
+  visível em cada consulta qual contexto está sendo usado, e a transação sempre termina dentro do método.
+- **O papel não vai no JWT.** A cada requisição o guard pergunta ao banco `app_role()` (cache de 5 s,
+  `MEMBERSHIP_CACHE_MS`). Vínculo desativado ou usuário bloqueado → `401 session_invalid` em até 5 s.
+- **Tempo de login uniforme**: sempre roda um `bcrypt.compare`, mesmo sem usuário (hash descartável).
+  Senha errada, e-mail inexistente e conta desativada dão exatamente a mesma resposta.
+- **Senha**: bcrypt (`bcryptjs`, custo 12; o seed usa 10). Mais de 72 bytes é recusado (o bcrypt truncaria).
+- **CSRF no refresh**: o cookie é `SameSite=Lax` e só vale em `/api/v1/auth`; as demais rotas usam
+  `Authorization: Bearer`, que o navegador não envia sozinho.
+- **Trocar de workspace** (`select-tenant` com sessão aberta) revoga a sessão anterior daquele navegador.
+- **Rate limit em memória** (`@nestjs/throttler`): vale por instância. Com várias instâncias, trocar para um
+  storage Redis.
+- **Pacote `shared/`** (tipos compartilhados com o front) fica para a fase do front, quando houver quem consuma.
+- Em produção o boot falha se o `JWT_SECRET` for o de exemplo ou se `COOKIE_SECURE=false`.
+
 ## Próximas etapas
 
-2. **API** (Node/NestJS ou Fastify): auth (JWT + `auth_*`), middleware que abre transação e chama `app_set_context`, endpoints de chamados/mensagens/anexos (S3), worker (outbox + `sla_mark_breaches`), webhooks de cobrança.
+2. **API** — fase 1 pronta (esqueleto, `DbService`, erros, health, auth). Próximas: chamados; catálogo/equipe/KB/relatórios;
+   worker (outbox, `sla_mark_breaches`, automações); anexos e cobrança.
 3. **Front React**: portal do cliente + painel do atendente (fila, detalhe do chamado, SLA, KB, relatórios).

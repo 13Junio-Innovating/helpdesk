@@ -1,0 +1,21 @@
+{
+  "$schema": "../node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "no-explicit-any": "error",
+    "no-console": "error",
+    "typescript/no-extraneous-class": [
+      "warn",
+      {
+        "allowWithDecorator": true
+      }
+    ],
+    "unicorn/consistent-function-scoping": "off"
+  },
+  "ignorePatterns": [
+    "dist/**"
+  ]
+}
