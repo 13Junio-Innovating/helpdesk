@@ -181,7 +181,7 @@ describe('Worker (e2e: Postgres + Mailpit reais)', () => {
         expect((await bad.get(OutboxJob).runOnce()).failed).toBe(1);
         let r = await row();
         expect(r).toMatchObject({ status: 'failed', attempts: 1, has_token: true });
-        expect(r.last_error).toBeTruthy();
+        expect(r.last_error).toMatch(/ECONNREFUSED/); // causa real, mesmo quando IPv6+IPv4 falham (AggregateError)
         expect(r.wait).toBeGreaterThanOrEqual(25); // 30 s
         expect((await bad.get(OutboxJob).runOnce()).claimed).toBe(0); // ainda em espera
 
