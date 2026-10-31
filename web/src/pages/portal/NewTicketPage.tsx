@@ -4,7 +4,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
-import { BookOpen, ExternalLink } from 'lucide-react';
+import { BookOpen, ExternalLink, Paperclip, X } from 'lucide-react';
+import { checkFile, formatBytes, uploadFile } from '@/components/Attachments';
 import type { KbArticleSummary, Paginated, TicketDetail } from '@helpdesk/shared';
 import { api, ApiError } from '@/lib/api';
 import { applyApiErrors } from '@/lib/forms';
@@ -31,6 +32,8 @@ export function NewTicketPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [progress, setProgress] = useState<string | null>(null);
   const { register, handleSubmit, formState, watch, setError: setFieldError } = useForm<Form>({ resolver: zodResolver(schema) });
 
   const categories = useQuery({
@@ -55,8 +58,18 @@ export function NewTicketPage() {
         method: 'POST',
         body: { subject: data.subject, description: data.description, categoryId: data.categoryId || undefined },
       });
+      // anexos sobem depois que o chamado existe (a chave no storage leva o id do chamado)
+      const failed: string[] = [];
+      for (const f of files) {
+        try {
+          await uploadFile(t.id, f, (pct) => setProgress(`Enviando ${f.name}: ${pct}%`));
+        } catch {
+          failed.push(f.name);
+        }
+      }
+      setProgress(null);
       await qc.invalidateQueries({ queryKey: ['tickets'] });
-      navigate(`/portal/chamados/${t.id}`, { state: { created: true } });
+      navigate(`/portal/chamados/${t.id}`, { state: { created: true, failedUploads: failed } });
     } catch (e) {
       setError(e instanceof ApiError && QUOTA_MSG[e.code] ? QUOTA_MSG[e.code]! : applyApiErrors(e, setFieldError, ['subject', 'description', 'categoryId']));
     }
@@ -88,6 +101,29 @@ export function NewTicketPage() {
             <Field label="Descrição" error={formState.errors.description?.message} hint="Inclua o que aconteceu, quando começou e mensagens de erro.">
               <Textarea rows={8} {...register('description')} />
             </Field>
+            <div className="space-y-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary">
+                <Paperclip className="h-4 w-4" aria-hidden />Anexar arquivos (opcional)
+                <input type="file" multiple className="sr-only" onChange={(e) => {
+                  const picked = [...(e.target.files ?? [])];
+                  const bad = picked.map(checkFile).filter(Boolean);
+                  setError(bad.length ? bad.join(' ') : null);
+                  setFiles((cur) => [...cur, ...picked.filter((f) => !checkFile(f))]);
+                  e.target.value = '';
+                }} />
+              </label>
+              {files.length > 0 && (
+                <ul className="space-y-1 text-sm" aria-label="Arquivos para anexar">
+                  {files.map((f, i) => (
+                    <li key={`${f.name}-${i}`} className="flex items-center gap-2">
+                      <span className="flex-1 truncate">{f.name} <span className="text-xs text-muted">({formatBytes(f.size)})</span></span>
+                      <button type="button" aria-label={`Remover ${f.name}`} onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}><X className="h-4 w-4" /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {progress && <p role="status" className="text-xs text-muted">{progress}</p>}
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => navigate(-1)}>
                 Cancelar

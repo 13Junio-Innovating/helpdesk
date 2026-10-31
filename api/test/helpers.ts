@@ -11,7 +11,7 @@ export const SEED_PASSWORD = 'demo1234';
 
 export async function createApp(): Promise<NestExpressApplication> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, bufferLogs: true });
+  const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, bufferLogs: true, rawBody: true });
   configureApp(app);
   await app.init();
   return app;

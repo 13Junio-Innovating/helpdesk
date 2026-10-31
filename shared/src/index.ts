@@ -282,3 +282,14 @@ export interface ReportsOverview {
   byCategory: Array<{ categoryId: string | null; name: string; count: number }>;
   minutesTracked: number;
 }
+
+/** Anexos: mesmo limite e lista de tipos na API e no front. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+export const ATTACHMENT_TYPES = [
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+  'application/pdf', 'text/plain', 'text/csv',
+  'application/zip',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+] as const;

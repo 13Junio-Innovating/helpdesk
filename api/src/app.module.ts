@@ -19,6 +19,8 @@ import { TeamModule } from './team/team.module.js';
 import { KbModule } from './kb/kb.module.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { TenantsModule } from './tenants/tenants.module.js';
+import { StorageModule } from './storage/storage.module.js';
+import { BillingModule } from './billing/billing.module.js';
 
 const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
 
@@ -64,6 +66,7 @@ const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
         }),
     }),
     DbModule,
+    StorageModule,
     HealthModule,
     AuthModule,
     CatalogModule,
@@ -72,6 +75,7 @@ const REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
     KbModule,
     ReportsModule,
     TenantsModule,
+    BillingModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

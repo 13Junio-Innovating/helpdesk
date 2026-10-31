@@ -18,6 +18,7 @@ export function SuspendedPage() {
         </p>
         <p className="text-muted">{admin ? 'Regularize a assinatura para reativar o acesso completo.' : 'Fale com o administrador do seu workspace.'}</p>
         <div className="flex flex-wrap gap-2">
+          {admin && <Button onClick={() => navigate('/configuracoes/plano')}>Regularizar assinatura</Button>}
           <Button variant="secondary" onClick={() => navigate('/')}>
             Continuar em modo leitura
           </Button>

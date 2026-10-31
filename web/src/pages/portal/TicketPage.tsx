@@ -11,6 +11,7 @@ import { useDocumentTitle } from '@/lib/hooks';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { Alert, Badge, Card, LoadingList } from '@/components/ui/misc';
+import { Attachments } from '@/components/Attachments';
 
 export function TicketPage() {
   const { id = '' } = useParams();
@@ -43,6 +44,9 @@ export function TicketPage() {
       <Link to="/portal" className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
         <ArrowLeft className="h-4 w-4" aria-hidden /> Meus chamados
       </Link>
+      {((location.state as { failedUploads?: string[] } | null)?.failedUploads?.length ?? 0) > 0 && (
+        <Alert kind="error">Não foi possível anexar: {(location.state as { failedUploads: string[] }).failedUploads.join(', ')}. Tente de novo abaixo.</Alert>
+      )}
       {(location.state as { created?: boolean } | null)?.created && (
         <Alert kind="success">Chamado #{t.number} aberto. Você receberá as respostas por e-mail e também aqui.</Alert>
       )}
@@ -63,6 +67,10 @@ export function TicketPage() {
           <Bubble key={m.id} author={m.author?.name ?? 'Sistema'} mine={m.author?.id === me?.user.id} at={m.createdAt} body={m.body} />
         ))}
       </section>
+
+      <Card className="p-4 sm:p-4">
+        <Attachments ticketId={t.id} items={t.attachments} canDelete={(a) => a.uploadedBy?.id === me?.user.id} onChange={() => q.refetch()} />
+      </Card>
 
       {t.status.kind === 'resolved' && <Alert kind="success">Este chamado foi resolvido. Se o problema voltar, responda abaixo para reabrir.</Alert>}
       {closed ? (

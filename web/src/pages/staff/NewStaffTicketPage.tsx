@@ -3,7 +3,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
+import { useAuth } from '@/auth/AuthProvider';
 import type { Member, TicketDetail } from '@helpdesk/shared';
 import { api, ApiError } from '@/lib/api';
 import { applyApiErrors } from '@/lib/forms';
@@ -31,9 +32,11 @@ const blank = (v?: string) => (v ? v : undefined);
 /** Equipe abre chamado em nome de um cliente (ex.: atendimento por telefone). */
 export function NewStaffTicketPage() {
   useDocumentTitle('Novo chamado');
+  const { me } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [upgrade, setUpgrade] = useState(false);
   const [search, setSearch] = useState('');
   const q = useDebounced(search.trim(), 300);
   const requesters = useQuery({ queryKey: ['members', 'requesters', q], queryFn: () => api<Member[]>('/members', { query: { role: 'requester', active: true, q: q || undefined } }) });
@@ -57,6 +60,7 @@ export function NewStaffTicketPage() {
       await qc.invalidateQueries({ queryKey: ['tickets'] });
       navigate(`/chamados/${t.id}`);
     } catch (e) {
+      setUpgrade(e instanceof ApiError && e.status === 402 && me?.role === 'admin');
       setError(e instanceof ApiError && e.status === 402 ? e.message : applyApiErrors(e, setFieldError, ['subject', 'description', 'requesterId', 'tags']));
     }
   });
@@ -66,7 +70,12 @@ export function NewStaffTicketPage() {
       <h1 className="text-2xl font-semibold">Novo chamado</h1>
       <Card>
         <form onSubmit={onSubmit} noValidate className="grid gap-4 sm:grid-cols-2">
-          {error && <Alert kind="error" className="sm:col-span-2">{error}</Alert>}
+          {error && (
+            <Alert kind="error" className="sm:col-span-2">
+              {error}
+              {upgrade && <> <Link to="/configuracoes/plano" className="font-medium underline">Ver planos e fazer upgrade</Link></>}
+            </Alert>
+          )}
           <div className="space-y-2 sm:col-span-2">
             <Field label="Buscar cliente"><Input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="nome ou e-mail" /></Field>
             <Field label="Cliente" error={formState.errors.requesterId?.message}>
