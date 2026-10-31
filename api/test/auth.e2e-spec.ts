@@ -157,7 +157,9 @@ describe('falha fechada: sem contexto de tenant o banco devolve zero linhas', ()
     expect(await db.anonymous(count('SELECT count(*) AS n FROM tickets'))).toBe(0);
 
     const { rows } = await su.query<{ id: string }>("SELECT id FROM users WHERE email = 'admin@demo.local'");
-    expect(await db.withTenant({ tenantId: demoId, userId: rows[0]!.id }, count('SELECT count(*) AS n FROM tickets'))).toBe(10);
+    const total = Number((await su.query<{ n: string }>('SELECT count(*) AS n FROM tickets WHERE tenant_id = $1', [demoId])).rows[0]!.n);
+    expect(total).toBeGreaterThan(0);
+    expect(await db.withTenant({ tenantId: demoId, userId: rows[0]!.id }, count('SELECT count(*) AS n FROM tickets'))).toBe(total);
   });
 
   it('o contexto é LOCAL: não vaza para a próxima transação da mesma conexão', async () => {

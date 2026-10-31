@@ -69,3 +69,37 @@ export function rawSetCookie(res: { headers: Record<string, unknown> }): string 
 }
 
 export const uniq = () => Math.random().toString(36).slice(2, 8);
+
+/** Faz login e devolve o access token (usuários com um único workspace). */
+export async function tokenFor(t: TestApp, email: string, password = PASSWORD): Promise<string> {
+  const res = await t.http().post(`${API}/auth/login`).send({ email, password });
+  if (res.status !== 200 || !res.body.accessToken) throw new Error(`login falhou para ${email}: ${res.status}`);
+  return res.body.accessToken as string;
+}
+
+/** Ids do workspace demo, lidos como superusuário (só para montar cenários). */
+export async function demoFixtures(su: pg.Pool) {
+  const one = async (sql: string, args: unknown[] = []) => {
+    const { rows } = await su.query<{ id: string }>(sql, args);
+    if (!rows[0]) throw new Error(`fixture ausente: ${sql} ${JSON.stringify(args)}`);
+    return rows[0].id;
+  };
+  const tenant = await one("SELECT id FROM tenants WHERE slug = 'demo'");
+  const user = (email: string) => one('SELECT id FROM users WHERE email = $1', [email]);
+  const status = (name: string) => one('SELECT id FROM statuses WHERE tenant_id = $1 AND name = $2', [tenant, name]);
+  const priority = (name: string) => one('SELECT id FROM priorities WHERE tenant_id = $1 AND name = $2', [tenant, name]);
+  return {
+    tenant,
+    users: {
+      admin: await user('admin@demo.local'), carlos: await user('carlos@demo.local'), bia: await user('bia@demo.local'),
+      joao: await user('joao@acme.local'), maria: await user('maria@acme.local'), pedro: await user('pedro@globex.local'),
+    },
+    status: {
+      novo: await status('Novo'), atendimento: await status('Em atendimento'), aguardando: await status('Aguardando cliente'),
+      resolvido: await status('Resolvido'), fechado: await status('Fechado'),
+    },
+    priority: { baixa: await priority('Baixa'), normal: await priority('Normal'), alta: await priority('Alta'), urgente: await priority('Urgente') },
+    category: await one("SELECT id FROM categories WHERE tenant_id = $1 AND name = 'Incidente'", [tenant]),
+  };
+}
+export type DemoFixtures = Awaited<ReturnType<typeof demoFixtures>>;

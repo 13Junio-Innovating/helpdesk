@@ -12,6 +12,7 @@ import { throttlerOptions } from './common/http/throttling.js';
 import { AppConfig } from './config/app-config.js';
 import { ConfigCoreModule } from './config/config-core.module.js';
 import { HealthModule } from './health/health.module.js';
+import { TicketsModule } from './tickets/tickets.module.js';
 
 const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -57,6 +58,7 @@ const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
     AuthCoreModule,
     HealthModule,
     AuthModule,
+    TicketsModule,
   ],
   providers: [
     // ordem importa: limite de tentativas -> autenticação -> papel

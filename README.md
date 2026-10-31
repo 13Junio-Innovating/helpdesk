@@ -102,6 +102,7 @@ api/src/
   common/http/     rate limit (geral por IP; login/cadastro por IP e por e-mail)
   health/          GET /health, GET /health/ready
   auth/            login, select-tenant, workspaces, signup, refresh, logout, logout-all, me
+  tickets/         chamados, mensagens, ações em lote, apontamento de horas
 api/test/          e2e contra o banco de dev (superusuário só para preparar/limpar cenários)
 ```
 
@@ -109,6 +110,20 @@ api/test/          e2e contra o banco de dev (superusuário só para preparar/li
 com vários, devolve `preTenantToken` (5 min, só serve para `/auth/workspaces`, `/auth/select-tenant` e
 `/auth/logout-all`) e a lista. O access token (15 min) leva só `{sub, tid, typ}` e fica em memória no front;
 o refresh vai no cookie `sd_rt` (`httpOnly; SameSite=Lax; Path=/api/v1/auth; Secure` fora de dev).
+
+**Chamados** (`/tickets`):
+
+| Rota | O quê |
+|---|---|
+| `GET /tickets` | lista paginada por cursor (`limit` ≤ 100, `cursor`). Filtros: `status` (ids, `kind` ou `unresolved`, separados por vírgula), `assignee` (`me`/`none`/id), `queue`, `category`, `priority`, `organization`, `requester`, `sla` (`breached`/`running`/`paused`), `tag`, `q` (full-text em português + trecho do assunto + `#número`), `createdFrom`/`createdTo`, `sort` (`updated`/`created`/`priority`/`due`) |
+| `POST /tickets` | abre chamado. Cliente só informa `subject`, `description`, `categoryId` |
+| `GET /tickets/:id` | chamado + mensagens visíveis + anexos; para a equipe também `events`, `sla` e `timeLoggedMinutes` |
+| `PATCH /tickets/:id` | altera vários campos numa transação (`null` limpa; ausente não mexe) |
+| `POST /tickets/:id/messages` | `{ kind: public_reply \| internal_note, body }`; devolve a mensagem e o chamado atualizado |
+| `POST /tickets/bulk` | `{ ids[≤100], changes: { assigneeId, statusId, priorityId, queueId, addTags } }`, tudo ou nada |
+| `POST/GET /tickets/:id/time-entries`, `DELETE /time-entries/:id` | apontamento de horas (equipe) |
+
+O SLA vem como `sla: { first_response: {state, dueAt, minutesRemaining}, resolution: {...} }` (nomes da `v_ticket_sla`).
 
 ### Decisões
 
@@ -125,11 +140,22 @@ o refresh vai no cookie `sd_rt` (`httpOnly; SameSite=Lax; Path=/api/v1/auth; Sec
 - **Trocar de workspace** (`select-tenant` com sessão aberta) revoga a sessão anterior daquele navegador.
 - **Rate limit em memória** (`@nestjs/throttler`): vale por instância. Com várias instâncias, trocar para um
   storage Redis.
+- **A RLS de UPDATE filtra em silêncio** (0 linhas, sem erro). Depois de um UPDATE que não afetou nada, a API
+  confere se o chamado é visível: visível → `403 forbidden`; invisível → `404` (não revela que existe).
+- **Cliente abrindo chamado com campos de equipe** (prioridade, responsável, status, solicitante...) leva
+  `403 field_not_allowed` já na API, para dar um erro claro. O trigger do banco continua sendo a garantia
+  (há teste inserindo direto como cliente).
+- **O cliente não recebe dados internos** do chamado: SLA, fila, tags, campos customizados e organização ficam
+  fora da resposta (a RLS já esconde SLA e organização; o resto é filtrado na API).
+- **Paginação por chave** (`(ordem, id) < cursor`) com os valores guardados como texto do Postgres, para não perder
+  os microssegundos dos timestamps. `sort=due` usa o próximo prazo de SLA em andamento (sem prazo vai para o fim).
+- **Qualquer membro da equipe pode apagar apontamentos de horas** (é o que a policy da 008 permite). Se for
+  preciso restringir ao dono ou ao admin, isso entra numa migration nova.
 - **Pacote `shared/`** (tipos compartilhados com o front) fica para a fase do front, quando houver quem consuma.
 - Em produção o boot falha se o `JWT_SECRET` for o de exemplo ou se `COOKIE_SECURE=false`.
 
 ## Próximas etapas
 
-2. **API** — fase 1 pronta (esqueleto, `DbService`, erros, health, auth). Próximas: chamados; catálogo/equipe/KB/relatórios;
+2. **API** — fases 1 (esqueleto, `DbService`, erros, health, auth) e 2 (chamados) prontas. Próximas: catálogo/equipe/KB/relatórios;
    worker (outbox, `sla_mark_breaches`, automações); anexos e cobrança.
 3. **Front React**: portal do cliente + painel do atendente (fila, detalhe do chamado, SLA, KB, relatórios).
