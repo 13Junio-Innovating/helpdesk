@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Banco, API e front (e2e)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # npm 10 tem um bug com este monorepo (workspaces + peer deps); o projeto usa npm 11
+      - run: npm install -g npm@11.21.1
+
+      - name: Infra (Postgres 16, Mailpit, S3)
+        run: docker compose up -d db mailpit s3
+
+      - run: cp .env.example .env
+
+      - name: Aguarda Postgres e S3
+        run: |
+          for i in $(seq 1 60); do
+            pg_isready -h 127.0.0.1 -q && [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/)" != "000" ] && exit 0
+            sleep 2
+          done
+          docker compose logs; exit 1
+
+      - name: Banco (roles, migrations, seed)
+        run: ./db/dev-reset.sh
+
+      - name: Testes do banco
+        run: npm run test:db
+
+      - run: npm ci
+
+      - name: Build (shared, api, web)
+        run: npm run build
+
+      - name: Lint (oxlint + tsc)
+        run: npm run lint
+
+      - name: Auditoria de dependências
+        run: npm audit --audit-level=high
+
+      - name: Testes da API (unitários + e2e contra Postgres/Mailpit/S3 reais)
+        run: npm run test:api
+
+      - name: Playwright (navegador)
+        run: |
+          npm exec -w web -- playwright install --with-deps chromium
+          npm run test:e2e -w web
+
+      - name: Relatório do Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
+
+  docker:
+    name: Imagens Docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: API/worker
+        run: docker build -f api/Dockerfile -t helpdesk-api:ci .
+      - name: Front
+        run: docker build -f web/Dockerfile -t helpdesk-web:ci .

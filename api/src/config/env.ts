@@ -26,6 +26,28 @@ export const envSchema = z.object({
   TRUST_PROXY: z.string().default('loopback'),
   BODY_LIMIT: z.string().default('1mb'),
 
+  // armazenamento S3-compatível (anexos). Sem S3_ENDPOINT = AWS S3.
+  S3_ENDPOINT: z.string().url().optional(),
+  /** endpoint usado nas URLs pré-assinadas (o navegador precisa alcançá-lo) */
+  S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_BUCKET: z.string().default('helpdesk-attachments'),
+  S3_ACCESS_KEY: z.string().default(''),
+  S3_SECRET_KEY: z.string().default(''),
+  S3_FORCE_PATH_STYLE: bool.default(true),
+  /** dev: cria o bucket e a regra de CORS no boot */
+  S3_AUTO_CREATE_BUCKET: bool.default(false),
+
+  // cobrança
+  APP_URL: z.string().url().default('http://localhost:5173'),
+  BILLING_PROVIDER: z.enum(['fake', 'asaas']).default('fake'),
+  BILLING_FAKE_SECRET: z.string().min(16).default('dev-only-fake-billing-secret'),
+  ASAAS_API_URL: z.string().url().default('https://api-sandbox.asaas.com/v3'),
+  ASAAS_API_KEY: z.string().optional(),
+  ASAAS_WEBHOOK_TOKEN: z.string().optional(),
+  /** só para o webhook de cobrança (sd_worker); nunca usado por rotas de usuário */
+  DATABASE_URL_WORKER: z.string().url().optional(),
+
   THROTTLE_DEFAULT_LIMIT: z.coerce.number().int().min(1).default(300),
   THROTTLE_AUTH_TTL_SECONDS: z.coerce.number().int().min(1).default(900),
   THROTTLE_AUTH_IP_LIMIT: z.coerce.number().int().min(1).default(30),

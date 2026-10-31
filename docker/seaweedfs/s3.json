@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "helpdesk-dev",
+      "credentials": [{ "accessKey": "helpdesk_dev_key", "secretKey": "helpdesk_dev_secret_change_me" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

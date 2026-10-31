@@ -40,7 +40,7 @@ export function PublicOnly({ children }: { children: ReactNode }) {
 export function HomeRedirect() {
   const { status, me } = useAuth();
   if (status === 'loading') return <FullPageSpinner />;
-  if (!me) return <Navigate to="/entrar" replace />;
+  if (!me) return <Navigate to="/precos" replace />; // visitante: vitrine com os planos
   return <Navigate to={isStaff(me.role) ? '/painel' : '/portal'} replace />;
 }
 

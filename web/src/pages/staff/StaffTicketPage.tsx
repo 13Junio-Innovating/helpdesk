@@ -14,6 +14,7 @@ import { Alert, Badge, Card, LoadingList } from '@/components/ui/misc';
 import { useConfirm } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { TimerBadge } from '@/components/staff/badges';
+import { Attachments } from '@/components/Attachments';
 
 type Patch = Partial<Record<'statusId' | 'priorityId' | 'assigneeId' | 'queueId' | 'categoryId', string | null>> & { tags?: string[] };
 
@@ -74,6 +75,9 @@ export function StaffTicketPage() {
         <aside className="space-y-4" aria-label="Detalhes do chamado">
           <Properties ticket={t} onChange={(p) => update.mutate(p)} saving={update.isPending} />
           <SlaCard ticket={t} />
+          <Card className="p-4 sm:p-4">
+            <Attachments ticketId={t.id} items={t.attachments} canDelete={() => true} onChange={() => qc.invalidateQueries({ queryKey: key })} />
+          </Card>
           <TimeCard ticketId={t.id} total={t.timeSpentMinutes ?? 0} onChange={() => qc.invalidateQueries({ queryKey: key })} />
         </aside>
       </div>

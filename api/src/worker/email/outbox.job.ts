@@ -4,6 +4,7 @@ import type { WorkerEnv } from '../worker.env.js';
 import { WorkerDbService } from '../worker-db.service.js';
 import { MailerService } from './mailer.service.js';
 import { renderEmail } from './templates.js';
+import { errorMessage } from './error-message.js';
 
 interface Claimed {
   id: string;
@@ -66,7 +67,7 @@ export class OutboxJob {
         sent++;
       } catch (e) {
         failed++;
-        const msg = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+        const msg = errorMessage(e).slice(0, 500);
         const giveUp = row.attempts >= this.maxAttempts;
         const delay = Math.min(this.backoffBase * 2 ** (row.attempts - 1), 3600);
         await this.db.query(

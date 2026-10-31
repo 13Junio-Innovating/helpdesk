@@ -76,6 +76,8 @@ export function LoginPage() {
         <Link to="/cadastro" className="text-primary hover:underline">
           Crie seu workspace grátis
         </Link>
+        {' · '}
+        <Link to="/precos" className="text-primary hover:underline">Planos</Link>
       </p>
     </AuthLayout>
   );

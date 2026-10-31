@@ -196,7 +196,8 @@ test.describe('Painel da equipe', () => {
     await expect(page.getByRole('cell', { name: 'Financeiro', exact: true })).toHaveCount(0);
 
     await page.getByRole('link', { name: 'Plano e uso' }).click();
-    await expect(page.getByText('Starter')).toBeVisible();
+    await expect(page.getByText('Plano atual', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Assinar Starter' })).toBeVisible();
     await expect(page.getByRole('meter').first()).toBeVisible();
 
     // KB: escreve, pré-visualiza, publica no portal → cliente encontra

@@ -15,6 +15,7 @@ import { Alert, Badge, Card, LoadingList } from '@/components/ui/misc';
 import { useConfirm } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { CatalogCrud } from './CatalogCrud';
+import { limits, price, usePlans } from '@/lib/billing';
 
 const SECTIONS = [
   ['equipe', 'Equipe e convites'], ['filas', 'Filas'], ['categorias', 'Categorias'], ['prioridades', 'Prioridades'], ['status', 'Status'],
@@ -388,13 +389,13 @@ export function PlanSettings() {
           <p className="text-sm text-muted">Plano atual</p>
           <p className="text-xl font-semibold">{d.plan.name} <span className="text-sm font-normal text-muted">· R$ {(d.plan.priceCents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês</span></p>
           <p className="text-sm">Situação: <strong>{({ trial: 'Período de teste', active: 'Ativa', past_due: 'Pagamento pendente', suspended: 'Suspensa', canceled: 'Cancelada' } as Record<string, string>)[d.status]}</strong>{d.status === 'trial' && d.trialEndsAt ? ` até ${formatDateTime(d.trialEndsAt)}` : ''}</p>
-          <p className="text-xs text-muted">A contratação e a troca de plano chegam na próxima etapa (cobrança).</p>
         </Card>
         <Card className="space-y-3 p-4 sm:p-4">
           <div><p className="mb-1 text-sm font-medium">Agentes</p>{meter(d.usage.agents, d.plan.maxAgents)}</div>
           <div><p className="mb-1 text-sm font-medium">Chamados neste mês</p>{meter(d.usage.ticketsThisMonth, d.plan.maxTicketsPerMonth)}</div>
         </Card>
       </div>
+      <Upgrade current={d.plan.id} status={d.status} />
       <Card className="p-4 sm:p-4">
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
           <Field label="Nome do workspace" className="min-w-56 flex-1"><Input value={f.name} onChange={(e) => setForm({ ...f, name: e.target.value })} /></Field>
@@ -403,5 +404,48 @@ export function PlanSettings() {
         </form>
       </Card>
     </div>
+  );
+}
+
+/** Contratação: o checkout do provedor (Asaas, ou o simulado em dev) faz a cobrança; só o webhook muda o plano. */
+function Upgrade({ current, status }: { current: string; status: string }) {
+  const plans = usePlans();
+  const toast = useToast();
+  const [doc, setDoc] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const subscribed = status === 'active';
+  const go = async (planId: string) => {
+    setBusy(planId);
+    try {
+      const r = await api<{ url: string }>('/billing/checkout', { method: 'POST', body: { planId, document: doc || undefined } });
+      window.location.assign(r.url);
+    } catch (e) {
+      toast('error', e instanceof ApiError ? e.message : 'Não foi possível iniciar o pagamento.');
+      setBusy(null);
+    }
+  };
+  if (!plans.data) return null;
+  return (
+    <Card className="space-y-3 p-4 sm:p-4">
+      <h3 className="text-sm font-medium">{subscribed ? 'Trocar de plano' : 'Assinar um plano'}</h3>
+      {plans.data.requiresDocument && (
+        <Field label="CPF ou CNPJ para a cobrança" className="max-w-xs"><Input value={doc} onChange={(e) => setDoc(e.target.value)} inputMode="numeric" /></Field>
+      )}
+      <ul className="grid gap-3 md:grid-cols-3">
+        {plans.data.plans.map((p) => {
+          const isCurrent = p.id === current && subscribed;
+          return (
+            <li key={p.id} className={cn('flex flex-col rounded-lg border p-3 text-sm', p.id === current ? 'border-primary' : 'border-border')}>
+              <span className="font-medium">{p.name}</span>
+              <span className="text-lg font-semibold">{price(p.priceCents)}<span className="text-xs font-normal text-muted">/mês</span></span>
+              <span className="flex-1 text-xs text-muted">{limits(p).join(' · ')}</span>
+              <Button size="sm" className="mt-2" variant={isCurrent ? 'secondary' : 'primary'} disabled={isCurrent || !!busy} loading={busy === p.id} onClick={() => void go(p.id)}>
+                {isCurrent ? 'Plano atual' : `Assinar ${p.name}`}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

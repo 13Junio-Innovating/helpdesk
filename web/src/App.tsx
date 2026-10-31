@@ -8,6 +8,8 @@ import { SignupPage } from '@/pages/public/SignupPage';
 import { AcceptInvitePage, ForgotPasswordPage, ResetPasswordPage } from '@/pages/public/PasswordPages';
 import { NotFoundPage, SuspendedPage, SwitchWorkspacePage } from '@/pages/public/MiscPages';
 import { LoadingList } from '@/components/ui/misc';
+import { PricingPage } from '@/pages/billing/PricingPage';
+const FakeCheckoutPage = lazy(() => import('@/pages/billing/FakeCheckoutPage').then((m) => ({ default: m.FakeCheckoutPage })));
 
 // telas autenticadas carregadas sob demanda: o login não baixa o portal nem o painel
 const MyTicketsPage = lazy(() => import('@/pages/portal/MyTicketsPage').then((m) => ({ default: m.MyTicketsPage })));
@@ -76,6 +78,8 @@ export function App() {
         <Route path="/esqueci-senha" element={<ForgotPasswordPage />} />
         <Route path="/redefinir-senha" element={<ResetPasswordPage />} />
         <Route path="/convite" element={<AcceptInvitePage />} />
+        <Route path="/precos" element={<PricingPage />} />
+        <Route path="/assinatura/simulada" element={<RequireSession><FakeCheckoutPage /></RequireSession>} />
         <Route path="/conta-suspensa" element={<RequireSession><SuspendedPage /></RequireSession>} />
         <Route path="/workspaces" element={<RequireSession><SwitchWorkspacePage /></RequireSession>} />
 
