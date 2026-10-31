@@ -31,6 +31,43 @@ services:
       - s3data:/data
       - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
 
+  # ---------------- aplicação completa em containers: docker compose --profile full up -d --build
+  # (antes: ./db/dev-reset.sh no host para criar roles, migrations e seed)
+  api:
+    profiles: [full]
+    build: { context: ., dockerfile: api/Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment: &app-env
+      NODE_ENV: production
+      DATABASE_URL: postgresql://sd_app:app_dev_pw@db:5432/helpdesk
+      DATABASE_URL_WORKER: postgresql://sd_worker:worker_dev_pw@db:5432/helpdesk
+      S3_ENDPOINT: http://s3:8333
+      S3_PUBLIC_ENDPOINT: http://localhost:8333
+      SMTP_HOST: mailpit
+      APP_URL: http://localhost:8080
+      CORS_ORIGIN: http://localhost:8080
+      TRUST_PROXY: "1"
+    depends_on: [db, s3]
+
+  worker:
+    profiles: [full]
+    build: { context: ., dockerfile: api/Dockerfile }
+    restart: unless-stopped
+    command: ["node", "dist/worker/main.js"]
+    healthcheck: { disable: true }
+    env_file: .env
+    environment: *app-env
+    depends_on: [db, mailpit]
+
+  web:
+    profiles: [full]
+    build: { context: ., dockerfile: web/Dockerfile }
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on: [api]
+
 volumes:
   pgdata:
   s3data:

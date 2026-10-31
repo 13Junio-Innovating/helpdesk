@@ -1,89 +1,92 @@
 # Helpdesk SaaS
 
-Etapas: **banco** (PostgreSQL 16, pronto) → **API** (NestJS, em andamento) → front React.
+Service desk multi-tenant no estilo Desk Manager/Freshdesk. Inclui:
 
-Service desk multi-tenant (chamados, SLA com horário comercial, filas, categorias,
-base de conhecimento, apontamento de horas, automações, planos e limites).
+- **Chamados** com SLA em horário comercial, filas, categorias e prioridades.
+- **Portal do cliente** e **painel da equipe**.
+- **Base de conhecimento**, **automações**, **apontamento de horas** e **relatórios**.
+- **Anexos** em S3 e **planos com cobrança** (Asaas).
 
-## Ver rodando na sua máquina
+| Camada | Tecnologia |
+|---|---|
+| Banco | PostgreSQL 16 — RLS por tenant, regras de negócio e SLA em SQL (`db/`) |
+| API | NestJS 12 (ESM) + `pg` puro, sem ORM (`api/`) |
+| Worker | processo separado da mesma imagem (`api/src/worker`) |
+| Front | Vite + React 18 + TS, React Router 7, TanStack Query, Tailwind 4 (`web/`) |
+| Tipos compartilhados | `shared/` (`@helpdesk/shared`) |
 
-Pré-requisitos: Docker, Node 22+, cliente `psql` (os scripts de `db/` usam).
+## Rodar em desenvolvimento
 
-```bash
-git clone https://github.com/13Junio-Innovating/helpdesk && cd helpdesk
-git checkout feat/fase-3-catalogo-equipe-kb     # ou a branch da fase mais recente
-docker compose up -d && cp .env.example .env && ./db/dev-reset.sh
-npx npm@11 install && npm run build -w shared
-npm run start:dev -w api            # API
-npm run build -w api && npm run start:worker -w api   # worker (outro terminal)
-```
-
-npm run dev -w web                  # front React (outro terminal)
-```
-
-Abra **http://localhost:5173** (app), **http://localhost:3000/docs** (Swagger) e **http://localhost:8025** (Mailpit: todos os e-mails enviados em dev).
-Logins do seed (senha `demo1234`): cliente `joao@acme.local`; equipe `admin@demo.local`.
+Pré-requisitos: Docker, Node 22+, **npm 11** (`npm i -g npm@11`; o npm 10 tem um bug com estes workspaces) e o cliente `psql`, usado pelos scripts de `db/`.
 
 ```bash
-npm run test:web                    # Playwright (sobe API e Vite sozinho; precisa do Postgres) Para testar, clique em `POST /api/v1/auth/login`, envie
-`{"email":"admin@demo.local","password":"demo1234"}`, copie o `accessToken`, clique em **Authorize** e cole o token.
-O front React (http://localhost:5173) entra nas fases 5 e 6.
-
-## Subir em desenvolvimento
-
-```bash
-docker compose up -d            # Postgres 16 (ou use um Postgres local)
+docker compose up -d                 # Postgres 16, Mailpit (e-mail) e S3 de dev (SeaweedFS)
 cp .env.example .env
-./db/dev-reset.sh               # drop + roles + migrations + seed
-npm run test:db                 # suíte SQL do banco
-
-npm install                     # requer npm >= 11 (bug do npm 10 com workspaces/peer deps)
-npm run build -w shared
-npm run start:dev -w api        # http://localhost:3000/api/v1 · Swagger em http://localhost:3000/docs
-npm run test:api                # unitários + e2e da API contra o Postgres real (usa o seed)
-npm run lint
+./db/dev-reset.sh                    # recria o banco: roles + migrations 001–013 + seed
+npm ci && npm run build              # shared, api e web
 ```
 
-Seed: workspace `demo` — `admin@demo.local` / `demo1234` (agentes `carlos@`, `bia@`; clientes `joao@acme.local`, etc.).
+Em três terminais:
+
+```bash
+npm run start:prod -w api            # API em http://localhost:3000 (Swagger em /docs)
+npm run start:worker -w api          # worker: SLA, e-mails, automações
+npm run dev -w web                   # app em http://localhost:5173
+```
+
+| Endereço | O quê |
+|---|---|
+| http://localhost:5173 | app (`/precos` é a vitrine; `/entrar` o login) |
+| http://localhost:3000/docs | Swagger da API |
+| http://localhost:8025 | Mailpit: todos os e-mails enviados em dev (convites, respostas, reset de senha) |
+
+Logins do seed (senha `demo1234`):
+- admin: `admin@demo.local`;
+- agentes: `carlos@demo.local`, `bia@demo.local`;
+- clientes: `joao@acme.local`, `maria@acme.local`, `pedro@globex.local`.
+
+### Tudo em contêineres
+
+```bash
+docker compose up -d && ./db/dev-reset.sh            # infra + banco
+docker compose --profile full up -d --build          # api, worker e web (Nginx) → http://localhost:8080
+```
+
+Atrás de proxy corporativo com TLS interceptado, construa as imagens passando a CA como *secret* (ela não fica na imagem):
+`docker build --secret id=npm_ca,src=ca.crt -f api/Dockerfile .`
+
+## Testes
+
+```bash
+npm run test:db        # suíte SQL (roda como sd_app/sd_worker de verdade)
+npm run test:api       # unitários + e2e da API e do worker contra Postgres, Mailpit e S3 reais
+npm run test:web       # Playwright no navegador (sobe API e Vite sozinho)
+npm run lint           # oxlint + tsc (api e web)
+```
+
+O CI (`.github/workflows/ci.yml`) roda tudo isso a cada PR: banco, build, lint, `npm audit`, testes da API, Playwright e build das imagens Docker.
 
 ## Estrutura
 
 ```
-shared/               tipos/enums compartilhados API ⇄ front (@helpdesk/shared)
-web/                  Vite + React 18 + TS (React Router 7, TanStack Query, RHF + Zod, Tailwind 4, Radix)
-  src/lib/api.ts        cliente HTTP único: token em memória, refresh automático "single flight", erros { code, message }
-  src/auth/             sessão (restaura pelo cookie ao abrir), guardas por papel
-  src/pages/public/     entrar (com seletor de workspace), cadastro, esqueci/redefinir senha, convite, conta suspensa
-  src/pages/portal/     portal do cliente: meus chamados, abrir chamado (sugere artigos da KB), conversa, central de ajuda
-  src/pages/staff/      painel da equipe: dashboard, chamados (visões salvas, lote, atalhos), detalhe, novo chamado,
-                        base de conhecimento (Markdown), clientes/organizações, configurações (admin)
-  e2e/                  Playwright contra a stack real
-api/                  NestJS 12 (ESM) + pg puro
-  src/common/db/        DbService: withTenant() / withoutTenant() — único caminho para o banco
-  src/common/errors/    filtro global + mapeamento SQLSTATE → { code, message }
-  src/common/auth/      JwtAuthGuard global, @Public, @Roles, @AllowPreTenant, @CurrentTenantUser
-  src/common/throttle/  rate limit (geral por IP; login/signup/forgot por IP e por e-mail)
+db/                   migrations 001–013, seed, testes SQL, scripts (bootstrap/migrate/dev-reset)
+shared/               tipos, enums e constantes compartilhados API ⇄ front
+api/
+  src/common/           DbService.withTenant (contexto de tenant), erros → { code, message }, guards, rate limit
   src/auth/             login em 2 etapas, refresh com rotação, signup, convite, reset de senha
-  src/catalog/          leitura de status/prioridades/categorias/filas (CRUD na fase 3)
-  src/tickets/          chamados, mensagens, ações em lote, apontamento de horas
-  src/catalog/          CRUD de filas, categorias, prioridades, status, horário comercial, SLA e automações
-  src/team/             membros, convites, organizações, /agents
-  src/kb/               base de conhecimento
-  src/reports/          /reports/overview (SQL agregado)
-  src/tenants/          /tenant (plano, uso, assinatura)
+  src/tickets/          chamados, mensagens, lote, horas, anexos (S3)
+  src/catalog/          filas, categorias, prioridades, status, horário comercial, SLA, automações, respostas prontas
+  src/team/  src/kb/  src/reports/  src/tenants/  src/billing/  src/storage/  src/health/
   src/worker/           processo separado (sd_worker): SLA, outbox de e-mail, automações, alertas
-  src/health/           /health (banco) e /health/ready (migrations exigidas)
-  test/                 e2e (vitest + supertest) contra o banco de dev
-db/
-  bootstrap.sh        cria banco, extensões e roles (rodar 1x, como superusuário)
-  migrate.sh          aplica db/migrations/*.sql uma vez cada (tabela schema_migrations)
-  migrations/         001 tipos · 002 tenancy · 003 catálogo+SLA · 004 chamados · 005 KB/outbox
-                      006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
-                      010 sessões (refresh com rotação) + reset de senha
-                      011 e-mail de convite pela outbox · 012 estado do worker (automation_runs, sla_alerts)
-                      013 respostas prontas (macros)
-  seed/dev.sql        dados de demonstração
-  tests/              suíte SQL (60 asserções) que roda como sd_app/sd_worker de verdade
+  test/                 e2e (vitest + supertest)
+web/
+  src/lib/api.ts        cliente HTTP único: token em memória, refresh "single flight"
+  src/pages/public/     login, cadastro, senha, convite, conta suspensa
+  src/pages/portal/     portal do cliente
+  src/pages/staff/      painel da equipe e configurações
+  src/pages/billing/    preços e checkout simulado
+  e2e/                  Playwright
+docker/  docker-compose.yml  api/Dockerfile  web/Dockerfile (+ nginx.conf)
 ```
 
 ## Segurança multi-tenant (o ponto mais importante)
@@ -122,15 +125,14 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
 - **Planos**: limite de agentes e de chamados/mês; tenant suspenso não abre chamados.
 - Cadastro self-service (`signup_tenant`), convites (`accept_invitation`), login (`auth_*`), `delete_tenant` (LGPD).
 
-## Decisões e limitações conhecidas
+## Decisões do banco
 
 - Ao retomar um SLA pausado, o prazo é empurrado pelo tempo corrido de pausa (não em minutos úteis).
 - `password_hash`: gere com bcrypt/argon2 na API. O seed usa bcrypt (`$2a$`).
 - Busca textual (`portuguese`) e trigram em `tickets.subject`; sem `unaccent` aplicado ainda.
 - Não há tabela de campos customizados (usa-se `tickets.custom_fields jsonb`), nem caixas de e-mail de entrada, nem CMDB/field service — ficam para depois do MVP.
-- Testado em PostgreSQL 16.15 local. O `docker-compose.yml` não foi executado neste ambiente.
 
-## API — contrato e decisões
+## Decisões da API e do front
 
 - **Toda** query de dados de tenant roda em `DbService.withTenant(ctx, fn)`: `BEGIN` → `app_set_context` (LOCAL) →
   revalida no banco `app_role()` e `users.disabled_at` → `fn` → `COMMIT`/`ROLLBACK` → conexão liberada (descartada se o ROLLBACK falhar).
@@ -147,8 +149,8 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
 - **Convite para e-mail que já tem conta** exige a senha atual dessa conta (conferida na mesma transação; se falhar, o convite
   não é consumido). Sem isso, quem tivesse o link entraria na conta de outra pessoa.
 - **Reset de senha**: resposta idêntica exista ou não o e-mail; token de uso único (1 h), pedido novo invalida o anterior,
-  e o reset derruba todas as sessões. O e-mail sai pela `email_outbox` (agora com `tenant_id` opcional); o worker (fase 4)
-  deve apagar o token do payload depois de enviar.
+  e o reset derruba todas as sessões. O e-mail sai pela `email_outbox` (agora com `tenant_id` opcional); o worker
+  apaga o token do payload depois de enviar.
 - **Rate limit** em memória (por instância): geral 300 req/min por IP; login/signup/accept-invite/forgot/reset com janelas
   de 15 min por IP (30) e por e-mail (10). Com várias instâncias, trocar o storage por Redis.
 - **Chamados**:
@@ -167,7 +169,7 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
   - Padrão (`isDefault`) é exclusivo. Status e prioridade padrão não podem ser removidos nem desmarcados (409), porque o banco depende deles para novos chamados.
   - Registro em uso → 409 `in_use`.
   - Mudar uma política de SLA não recalcula chamados já abertos.
-- **Formato das automações** (validado na API; o worker avalia na fase 4). Todas as condições precisam valer (E).
+- **Formato das automações** (validado na API e avaliado pelo worker). Todas as condições precisam valer (E).
   - `conditions`: `[{ "field": "priority.name", "op": "eq|in|contains", "value": "Urgente" | ["Alta","Urgente"] }]`.
     Campos: `subject`, `description`, `channel`, `tags`, `priority.id|name`, `status.id|name|kind`, `category.id|name`, `queue.id`, `organization.id`, `assignee.id`, `requester.id`.
   - `actions`: `assign_queue {queueId}`, `assign_agent {userId}`, `set_priority {priorityId}`, `add_tag {value}`, `notify_staff`.
@@ -223,8 +225,26 @@ cliente só vê os próprios chamados e nunca notas internas, auditoria ou cron�
 - Erros de validação: `{ code: 'validation_failed', details: [{ field, message }] }` em pt-BR.
 - Stack: NestJS 12 (ESM), vitest (template oficial do Nest 12), pg sem ORM, zod para validar o env, pino com `requestId`
   e redação de `authorization`/`cookie`/senhas/tokens.
+- **Anexos**:
+  - Upload direto do navegador para o S3 por URL pré-assinada. O tipo e o tamanho entram na assinatura, então o S3 recusa outro arquivo.
+  - A chave começa com `tenant/chamado/`, e o *confirm* só aceita chaves desse prefixo e confere o objeto (HEAD).
+  - O download sai por URL de 5 minutos, emitida só depois de a RLS confirmar que o usuário enxerga o anexo. O anexo de nota interna é invisível para o cliente.
+  - Tipos permitidos: lista fechada, sem HTML/SVG/executáveis; até 25 MB.
+  - Em dev, o S3 é o **SeaweedFS**, porque o MinIO deixou de publicar imagens Docker. O código fala S3 puro: em produção vale AWS S3, R2, MinIO etc.
+- **Cobrança**:
+  - Interface `BillingProvider` com o **provedor de teste** (dev/CI: checkout simulado e webhook assinado com HMAC) e o **Asaas**: assinatura mensal com `billingType: UNDEFINED` (Pix, boleto ou cartão); o webhook é autenticado pelo token do painel (`asaas-access-token`).
+  - O checkout não grava nada. Tenant e plano vão no `externalReference`, e **só o webhook verificado** muda `tenants.plan_id/status` e `subscriptions`.
+  - O webhook usa `sd_worker`, num pool exclusivo do módulo de cobrança. É idempotente por `billing_events (provider, event_id)`: retentativas do provedor não reprocessam.
+  - Pagamento aprovado → plano ativo; atraso → `past_due`; cancelamento → `canceled`, e a conta para de aceitar chamados com 402.
+  - **O Asaas não foi testado contra o serviço real** (sem credenciais aqui). O formato das chamadas tem testes unitários com `fetch` simulado, e o webhook tem e2e. Para ativar: `BILLING_PROVIDER=asaas`, `ASAAS_API_KEY` e `ASAAS_WEBHOOK_TOKEN` (sandbox: `https://api-sandbox.asaas.com/v3`), e cadastrar no Asaas o webhook `POST /api/v1/billing/webhook/asaas`.
 
-## Próximas etapas
+## Limitações conhecidas
 
-2. **API** (Node/NestJS ou Fastify): auth (JWT + `auth_*`), middleware que abre transação e chama `app_set_context`, endpoints de chamados/mensagens/anexos (S3), worker (outbox + `sla_mark_breaches`), webhooks de cobrança.
-3. **Front React**: portal do cliente + painel do atendente (fila, detalhe do chamado, SLA, KB, relatórios).
+- Rate limit em memória (por instância); com várias instâncias, usar Redis.
+- Duas abas renovando a sessão ao mesmo tempo disparam a detecção de reuso do refresh e derrubam a sessão.
+- Alterar uma política de SLA não recalcula chamados já abertos. O alerta de 80% usa tempo corrido, não minutos úteis.
+- O worker de automações olha eventos do último dia (um worker parado por mais de 24 h perde os anteriores).
+- Edição simultânea do mesmo chamado: vale a última alteração (sem controle otimista de versão).
+- Trocar para um plano menor não remove agentes acima do limite (o limite vale para novas inclusões).
+- Cada checkout no Asaas cria um cliente novo no provedor; não há reaproveitamento.
+- `npm audit`: 2 alertas **moderados** em `minimatch`, puxado pelo `@nestjs/cli` (ferramenta só de build, não vai para a imagem de produção nem recebe entrada de usuário). A correção oficial exige downgrade do CLI; o CI barra a partir de severidade alta.
