@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { DbService } from '../src/common/db/db.service.js';
-import { API, createTestApp, demoFixtures, PASSWORD, superPool, tokenFor, uniq, type DemoFixtures, type TestApp } from './helpers.js';
+import { API, createTestApp, demoFixtures, newTenant as newTenantHelper, superPool, tokenFor, uniq, type DemoFixtures, type TestApp } from './helpers.js';
 
 let t: TestApp;
 let su: pg.Pool;
@@ -38,14 +38,7 @@ async function listAll(token: string, query: string): Promise<Body[]> {
 
 const count = async (sql: string, args: unknown[]) => Number((await su.query<{ n: string }>(sql, args)).rows[0]!.n);
 
-async function newTenant(prefix: string) {
-  const slug = `e2e-${prefix}-${uniq()}`;
-  const res = await t.http().post(`${API}/auth/signup`)
-    .send({ workspaceName: `E2E ${prefix}`, slug, name: 'Admin', email: `${slug}@e2e.test.local`, password: PASSWORD });
-  expect(res.status).toBe(201);
-  createdTenants.push(res.body.tenantId);
-  return res.body as { tenantId: string; userId: string; accessToken: string };
-}
+const newTenant = (prefix: string) => newTenantHelper(t, prefix, createdTenants);
 
 beforeAll(async () => {
   t = await createTestApp();

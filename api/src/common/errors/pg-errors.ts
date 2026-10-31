@@ -77,7 +77,15 @@ export function isPgError(err: unknown): err is PgLikeError {
   );
 }
 
+const IN_USE: MappedError = {
+  status: 409,
+  code: 'in_use',
+  message: 'Este registro está em uso e não pode ser removido. Desative-o ou mova o que depende dele antes.',
+};
+
 export function mapPgError(err: PgLikeError): MappedError | undefined {
+  // 23503 serve para os dois lados da FK: apontar para algo inexistente OU apagar algo referenciado
+  if (err.code === '23503' && err.message.startsWith('update or delete on table')) return IN_USE;
   return (
     BY_MESSAGE[err.message] ??
     (err.constraint ? BY_CONSTRAINT[err.constraint] : undefined) ??

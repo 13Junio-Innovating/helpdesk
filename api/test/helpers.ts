@@ -103,3 +103,32 @@ export async function demoFixtures(su: pg.Pool) {
   };
 }
 export type DemoFixtures = Awaited<ReturnType<typeof demoFixtures>>;
+
+/** Cria um workspace novo pelo cadastro público e registra o id para limpeza. */
+export async function newTenant(t: TestApp, prefix: string, created: string[]) {
+  const slug = `e2e-${prefix}-${uniq()}`;
+  const email = `${slug}@e2e.test.local`;
+  const res = await t.http().post(`${API}/auth/signup`)
+    .send({ workspaceName: `E2E ${prefix}`, slug, name: `Admin ${prefix}`, email, password: PASSWORD });
+  if (res.status !== 201) throw new Error(`signup falhou: ${res.status} ${JSON.stringify(res.body)}`);
+  created.push(res.body.tenantId);
+  return { ...(res.body as { tenantId: string; userId: string; accessToken: string }), slug, email };
+}
+
+/** Lê da outbox (como superusuário) o token do último convite enviado para o e-mail. */
+export async function invitationToken(su: pg.Pool, email: string): Promise<string> {
+  const { rows } = await su.query<{ token: string }>(
+    `SELECT payload->>'token' AS token FROM email_outbox WHERE template = 'invitation' AND to_email = $1 ORDER BY id DESC LIMIT 1`,
+    [email],
+  );
+  if (!rows[0]) throw new Error(`nenhum convite na outbox para ${email}`);
+  return rows[0].token;
+}
+
+/** Convida (como admin) e aceita o convite; devolve a resposta do aceite. */
+export async function inviteAndAccept(t: TestApp, su: pg.Pool, adminToken: string, email: string, role: string) {
+  const inv = await t.http().post(`${API}/invitations`).set('Authorization', `Bearer ${adminToken}`).send({ email, role });
+  if (inv.status !== 201) throw new Error(`convite falhou: ${inv.status} ${JSON.stringify(inv.body)}`);
+  const token = await invitationToken(su, email);
+  return t.http().post(`${API}/auth/accept-invite`).send({ token, name: `Pessoa ${role}`, password: PASSWORD });
+}

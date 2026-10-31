@@ -5,7 +5,7 @@ import { TokensService } from '../common/auth/tokens.service.js';
 import { DbService, type DbClient } from '../common/db/db.service.js';
 import { AppError } from '../common/errors/app-error.js';
 import { AppConfig } from '../config/app-config.js';
-import type { LoginDto, SignupDto } from './dto/auth.dto.js';
+import type { AcceptInviteDto, LoginDto, SignupDto } from './dto/auth.dto.js';
 import { PasswordService } from './password.service.js';
 
 export interface Workspace {
@@ -100,6 +100,46 @@ export class AuthService {
     });
     const session = await this.issueSession(created.out_user_id, created.out_tenant_id);
     return { userId: created.out_user_id, tenantId: created.out_tenant_id, session };
+  }
+
+  /**
+   * Aceita convite: cria a conta (ou reaproveita a existente, mantendo a senha dela) e o vínculo.
+   * Uso único e com validade (banco). Limite de agentes do plano => 402 (trigger).
+   * O convite chegou no e-mail da pessoa, então ele também serve de login (como um link mágico).
+   */
+  async acceptInvite(dto: AcceptInviteDto): Promise<{ userId: string; tenantId: string; session: SessionTokens }> {
+    const hash = await this.passwords.hash(dto.password);
+    const r = await this.db.anonymous(async (c) => {
+      const { rows } = await c.query<{ out_tenant_id: string; out_user_id: string }>(
+        'SELECT out_tenant_id, out_user_id FROM accept_invitation($1, $2, $3)',
+        [sha256(dto.token), dto.name, hash],
+      );
+      return rows[0]!;
+    });
+    const session = await this.issueSession(r.out_user_id, r.out_tenant_id);
+    return { userId: r.out_user_id, tenantId: r.out_tenant_id, session };
+  }
+
+  /**
+   * Sempre faz o mesmo trabalho (gera token, consulta, hash) e o controller responde sempre igual,
+   * exista o e-mail ou não. O e-mail sai pela outbox (migration 013).
+   */
+  async forgotPassword(email: string): Promise<void> {
+    const t = newOpaqueToken();
+    await this.db.anonymous(async (c) => {
+      const { rowCount } = await c.query('SELECT 1 FROM auth_request_password_reset($1, $2)', [email, t.hash]);
+      if (rowCount) await c.query('SELECT enqueue_password_reset_email($1)', [t.token]);
+    });
+  }
+
+  /** Uso único, 1 h; o banco revoga todas as sessões abertas do usuário. */
+  async resetPassword(token: string, password: string): Promise<void> {
+    const hash = await this.passwords.hash(password);
+    const ok = await this.db.anonymous(async (c) => {
+      const { rows } = await c.query<{ ok: boolean }>('SELECT auth_reset_password($1, $2) AS ok', [sha256(token), hash]);
+      return rows[0]?.ok === true;
+    });
+    if (!ok) throw new AppError(410, 'reset_invalid', 'Link de redefinição inválido, expirado ou já utilizado.');
   }
 
   /** Rotação do refresh token. Em reuso o banco já revogou a sessão inteira. */

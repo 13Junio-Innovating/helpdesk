@@ -12,7 +12,13 @@ import { throttlerOptions } from './common/http/throttling.js';
 import { AppConfig } from './config/app-config.js';
 import { ConfigCoreModule } from './config/config-core.module.js';
 import { HealthModule } from './health/health.module.js';
+import { CatalogModule } from './catalog/catalog.module.js';
+import { KbModule } from './kb/kb.module.js';
+import { MacrosModule } from './macros/macros.module.js';
+import { ReportsModule } from './reports/reports.js';
+import { TenantsModule } from './tenants/tenants.js';
 import { TicketsModule } from './tickets/tickets.module.js';
+import { UsersModule } from './users/users.module.js';
 
 const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -59,6 +65,12 @@ const REQUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
     HealthModule,
     AuthModule,
     TicketsModule,
+    CatalogModule,
+    UsersModule,
+    KbModule,
+    ReportsModule,
+    MacrosModule,
+    TenantsModule,
   ],
   providers: [
     // ordem importa: limite de tentativas -> autenticação -> papel

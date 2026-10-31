@@ -10,7 +10,7 @@ base de conhecimento, apontamento de horas, automações, planos e limites).
 ```bash
 docker compose up -d            # Postgres 16 (ou use um Postgres local)
 cp .env.example .env
-./db/dev-reset.sh               # drop + roles + 12 migrations + seed
+./db/dev-reset.sh               # drop + roles + migrations + seed
 PGSUPER_DB_URL=postgresql://postgres:pg_dev_pw@127.0.0.1:5432/helpdesk ./db/tests/run.sh
 ```
 
@@ -33,8 +33,9 @@ db/
   migrations/         001 tipos · 002 tenancy · 003 catálogo+SLA · 004 chamados · 005 KB/outbox
                       006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
                       010 refresh tokens+reset de senha · 011 macros+visões salvas · 012 relatórios
+                      013 e-mails de sistema (convite e reset de senha) na outbox
   seed/dev.sql        dados de demonstração
-  tests/              suíte SQL (106 asserções) que roda como sd_app/sd_worker de verdade
+  tests/              suíte SQL (118 asserções) que roda como sd_app/sd_worker de verdade
 ```
 
 ## Segurança multi-tenant (o ponto mais importante)
@@ -103,6 +104,13 @@ api/src/
   health/          GET /health, GET /health/ready
   auth/            login, select-tenant, workspaces, signup, refresh, logout, logout-all, me
   tickets/         chamados, mensagens, ações em lote, apontamento de horas
+  catalog/         filas (+membros), categorias, prioridades, status, horário comercial (+faixas, feriados),
+                   políticas de SLA, automações — CRUD genérico guiado por catalog.specs.ts
+  users/           membros, agentes, convites, organizações (clientes)
+  kb/              base de conhecimento (busca full-text, slug automático)
+  reports/         GET /reports/overview -> report_overview()
+  macros/          respostas prontas (com render de variáveis) e visões salvas
+  tenants/         GET/PATCH /tenant: plano, uso do mês, trial
 api/test/          e2e contra o banco de dev (superusuário só para preparar/limpar cenários)
 ```
 
@@ -124,6 +132,36 @@ o refresh vai no cookie `sd_rt` (`httpOnly; SameSite=Lax; Path=/api/v1/auth; Sec
 | `POST/GET /tickets/:id/time-entries`, `DELETE /time-entries/:id` | apontamento de horas (equipe) |
 
 O SLA vem como `sla: { first_response: {state, dueAt, minutesRemaining}, resolution: {...} }` (nomes da `v_ticket_sla`).
+
+**Demais rotas** (todas sob `/api/v1`, todas sob `withTenant`):
+
+| Área | Rotas |
+|---|---|
+| Catálogo | `GET/POST /{queues,categories,priorities,statuses,business-hours,sla-policies,automation-rules}`, `GET/PATCH/DELETE /…/:id`; `GET/PUT /queues/:id/members`; `GET /business-hours/:id/schedule`, `PUT /business-hours/:id/slots`, `POST /business-hours/:id/holidays`, `DELETE /business-hours/:id/holidays/:data` |
+| Equipe | `GET /members` (cursor; `role`, `group=staff`, `active`, `organization`, `q`), `PATCH /members/:userId`, `GET /agents`, `GET/POST /invitations`, `DELETE /invitations/:id` |
+| Clientes | `GET/POST /organizations`, `GET/PATCH/DELETE /organizations/:id` |
+| Auth | `POST /auth/accept-invite`, `POST /auth/forgot-password`, `POST /auth/reset-password` |
+| KB | `GET /kb` (cursor; com `q` ordena por relevância), `GET /kb/:slug`, `POST /kb`, `PATCH/DELETE /kb/:id` |
+| Relatórios | `GET /reports/overview?from=&to=` (máx. 366 dias) |
+| Macros | `GET/POST /macros`, `PATCH/DELETE /macros/:id`, `POST /macros/:id/render {ticketId}`, `GET /macros/variables` |
+| Visões | `GET/POST /saved-views`, `PATCH/DELETE /saved-views/:id` (o GET inclui 4 visões prontas `builtin:*`) |
+| Workspace | `GET /tenant` (plano, uso de agentes e de chamados no mês, trial; assinatura só para admin), `PATCH /tenant` |
+
+**Automações** (formato validado na API e executado pelo worker):
+
+```json
+{ "event": "ticket_created",
+  "conditions": [{ "field": "priority.name", "op": "eq", "value": "Urgente" },
+                 { "field": "tags", "op": "contains", "value": "vip" },
+                 { "field": "category.id", "op": "in", "value": ["<uuid>", "<uuid>"] }],
+  "actions": [{ "type": "assign_queue", "queue_id": "<uuid>" }, { "type": "assign_agent", "user_id": "<uuid>" },
+              { "type": "set_priority", "priority_id": "<uuid>" }, { "type": "add_tag", "value": "plantao" },
+              { "type": "notify_staff" }] }
+```
+
+Campos: `subject, description, channel, tags, priority.{id,name}, status.{id,name,kind}, category.{id,name}, queue.{id,name},
+requester.email, organization.{id,name}`. Operadores: `eq`, `in`, `contains` (sem diferenciar maiúsculas). Todas as condições
+precisam valer (E). As referências das ações são conferidas no workspace ao salvar.
 
 ### Decisões
 
@@ -151,11 +189,31 @@ O SLA vem como `sla: { first_response: {state, dueAt, minutesRemaining}, resolut
   os microssegundos dos timestamps. `sort=due` usa o próximo prazo de SLA em andamento (sem prazo vai para o fim).
 - **Qualquer membro da equipe pode apagar apontamentos de horas** (é o que a policy da 008 permite). Se for
   preciso restringir ao dono ou ao admin, isso entra numa migration nova.
+- **Migration 013 (e-mails de sistema).** `sd_app` não grava na `email_outbox` e a recuperação de senha não tem
+  tenant. As funções `enqueue_invitation_email` e `enqueue_password_reset_email` só enfileiram e-mail para um convite
+  ou pedido de reset que acabou de ser criado (o token precisa bater com o hash guardado), então a API não vira
+  disparador de e-mails arbitrários. O token vai no payload até o envio; o worker vai apagá-lo depois de enviar.
+- **Convite também serve de login** (como um link mágico): chegou no e-mail da pessoa, é de uso único e vale 7 dias.
+  Se a pessoa já tem conta, a senha dela é mantida (a digitada no aceite é ignorada, regra do `accept_invitation`).
+  Um convite novo para o mesmo e-mail substitui os pendentes.
+- **O limite de agentes é conferido pelo banco no aceite do convite** (e na promoção de papel), não na criação do
+  convite: a API não reimplementa a regra. O admin vê o uso em `GET /tenant` antes de convidar.
+- **Escrita no catálogo sem `@Roles`**: a RLS decide e a API traduz (INSERT barrado → 42501 → 403; UPDATE/DELETE
+  barrado → 0 linhas → 403 se o registro é visível, 404 se não é).
+- **Padrões únicos** (`is_default` de status, prioridade, SLA): marcar um novo desmarca o anterior na mesma transação.
+  Status e prioridade sempre precisam ter um padrão (`422 default_required`).
+- **Apagar algo em uso** (FK) responde `409 in_use`, em vez do `422 invalid_reference` de quando se aponta para algo
+  que não existe.
+- **Automações exigem o recurso do plano** (`plans.features.automations`): no Starter, `402 plan_feature_unavailable`.
+- **Listas do catálogo não são paginadas** (são pequenas por natureza). Membros, organizações, KB e chamados são.
+- Mudar SLA, prioridade-padrão ou horário comercial **não recalcula** os prazos de chamados já abertos (só os novos e
+  os que mudarem de prioridade), que é o comportamento dos triggers da etapa 1.
 - **Pacote `shared/`** (tipos compartilhados com o front) fica para a fase do front, quando houver quem consuma.
 - Em produção o boot falha se o `JWT_SECRET` for o de exemplo ou se `COOKIE_SECURE=false`.
 
 ## Próximas etapas
 
-2. **API** — fases 1 (esqueleto, `DbService`, erros, health, auth) e 2 (chamados) prontas. Próximas: catálogo/equipe/KB/relatórios;
+2. **API** — fases 1 (esqueleto, `DbService`, erros, health, auth), 2 (chamados) e 3 (catálogo, equipe, convites, KB,
+   relatórios, macros, visões, workspace) prontas. Próximas:
    worker (outbox, `sla_mark_breaches`, automações); anexos e cobrança.
 3. **Front React**: portal do cliente + painel do atendente (fila, detalhe do chamado, SLA, KB, relatórios).

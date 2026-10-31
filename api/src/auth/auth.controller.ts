@@ -6,7 +6,7 @@ import { AllowPreTenant, AuthRateLimit, CurrentAuth, CurrentUser, Public } from 
 import { AppError } from '../common/errors/app-error.js';
 import { AppConfig } from '../config/app-config.js';
 import { AuthService } from './auth.service.js';
-import { LoginDto, SelectTenantDto, SignupDto } from './dto/auth.dto.js';
+import { AcceptInviteDto, ForgotPasswordDto, LoginDto, ResetPasswordDto, SelectTenantDto, SignupDto } from './dto/auth.dto.js';
 
 export const REFRESH_COOKIE = 'sd_rt';
 const COOKIE_PATH = '/api/v1/auth';
@@ -74,6 +74,32 @@ export class AuthController {
     const r = await this.auth.signup(dto);
     this.setRefreshCookie(res, r.session.refreshToken);
     return { userId: r.userId, tenantId: r.tenantId, accessToken: r.session.accessToken, expiresIn: r.session.expiresIn };
+  }
+
+  @Public()
+  @AuthRateLimit()
+  @Post('accept-invite')
+  async acceptInvite(@Body() dto: AcceptInviteDto, @Res({ passthrough: true }) res: Response) {
+    const r = await this.auth.acceptInvite(dto);
+    this.setRefreshCookie(res, r.session.refreshToken);
+    return { userId: r.userId, tenantId: r.tenantId, accessToken: r.session.accessToken, expiresIn: r.session.expiresIn };
+  }
+
+  @Public()
+  @AuthRateLimit()
+  @Post('forgot-password')
+  @HttpCode(202)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.auth.forgotPassword(dto.email);
+    return { message: 'Se o e-mail estiver cadastrado, enviaremos um link para redefinir a senha.' };
+  }
+
+  @Public()
+  @AuthRateLimit()
+  @Post('reset-password')
+  @HttpCode(204)
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
+    await this.auth.resetPassword(dto.token, dto.password);
   }
 
   @Public()

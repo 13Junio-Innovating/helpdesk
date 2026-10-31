@@ -52,3 +52,33 @@ export class SignupDto {
   @MaxLength(128)
   password: string;
 }
+
+export class AcceptInviteDto {
+  @IsString() @Length(20, 200, { message: 'Convite inválido.' }) token: string;
+
+  @Transform(trim)
+  @IsString()
+  @Length(2, 120, { message: 'Informe seu nome (2 a 120 caracteres).' })
+  name: string;
+
+  @IsString()
+  @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres.' })
+  @MaxLength(128)
+  password: string;
+}
+
+export class ForgotPasswordDto {
+  @Transform(normalizeEmail)
+  @IsEmail({}, { message: 'E-mail inválido.' })
+  @MaxLength(254)
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @IsString() @Length(20, 200, { message: 'Link inválido.' }) token: string;
+
+  @IsString()
+  @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres.' })
+  @MaxLength(128)
+  password: string;
+}

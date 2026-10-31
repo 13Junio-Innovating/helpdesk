@@ -23,6 +23,10 @@ describe('mapPgError', () => {
     expect(mapPgError(pgErr('23505', 'duplicate key', 'tenants_slug_key'))?.code).toBe('slug_taken');
   });
 
+  it('apagar registro referenciado => 409 in_use', () => {
+    expect(mapPgError(pgErr('23503', 'update or delete on table "statuses" violates foreign key constraint'))?.code).toBe('in_use');
+  });
+
   it('SQLSTATE desconhecido não é mapeado (vira 500 genérico no filtro)', () => {
     expect(mapPgError(pgErr('XX000', 'internal'))).toBeUndefined();
   });

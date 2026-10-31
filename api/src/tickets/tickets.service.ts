@@ -4,7 +4,7 @@ import { DbService, type DbClient } from '../common/db/db.service.js';
 import { AppError } from '../common/errors/app-error.js';
 import { decodeCursor, encodeCursor, type Page } from '../common/http/cursor.js';
 import type { BulkUpdateDto, CreateMessageDto, CreateTicketDto, ListTicketsQuery, UpdateTicketDto } from './dto/ticket.dto.js';
-import { likeContains, SqlParams } from './sql-params.js';
+import { likeContains, SqlParams } from '../common/db/sql-params.js';
 import { ticketSelect, toTicketView, type TicketRow, type TicketView } from './ticket.view.js';
 
 const STATUS_KINDS = ['open', 'pending', 'on_hold', 'resolved', 'closed'];
