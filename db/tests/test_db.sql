@@ -371,6 +371,67 @@ SELECT app_set_context(:'ta', :'ua', false);
 SELECT tst.expect_error('SELECT report_overview(now(), now() - interval ''1 day'')', '22023', 'período invertido é recusado');
 RESET ROLE;
 
+-- ======================================================================
+\warn '== 13. e-mails de sistema: convite e redefinição de senha =='
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ua', false);
+INSERT INTO invitations (tenant_id, email, role, token_hash, invited_by)
+VALUES (:'ta', 'convite13@alpha.test.local', 'agent', encode(digest('tok-convite-13', 'sha256'), 'hex'), :'ua')
+RETURNING id AS inv13 \gset
+SELECT tst.ok(enqueue_invitation_email(:'inv13', 'tok-convite-13') > 0, 'admin enfileira e-mail do convite com o token certo');
+SELECT tst.expect_error(format('SELECT enqueue_invitation_email(%L, ''outro-token'')', :'inv13'),
+                        'P0002', 'token que não bate com o hash não enfileira nada');
+SELECT app_set_context(:'ta', :'ug', false);
+SELECT tst.expect_error(format('SELECT enqueue_invitation_email(%L, ''tok-convite-13'')', :'inv13'),
+                        '42501', 'agente não enfileira convite');
+SELECT app_set_context(:'tb', :'ub', false);
+SELECT tst.expect_error(format('SELECT enqueue_invitation_email(%L, ''tok-convite-13'')', :'inv13'),
+                        'P0002', 'admin de outro tenant não enfileira convite alheio');
+SELECT tst.expect_error('INSERT INTO email_outbox (to_email, template) VALUES (''x@x'', ''x'')',
+                        '42501', 'sd_app continua sem INSERT direto na outbox');
+
+SELECT app_set_context(NULL, NULL, false);
+SELECT count(*) AS n13 FROM auth_request_password_reset('cliente1@alpha.test.local', encode(digest('tok-reset-13', 'sha256'), 'hex')) \gset
+SELECT tst.ok(:n13 = 1, 'pedido de reset criado');
+SELECT tst.ok(enqueue_password_reset_email('tok-reset-13'), 'e-mail de reset enfileirado (sem tenant)');
+SELECT tst.ok(NOT enqueue_password_reset_email('tok-reset-13'), 'o mesmo pedido não é enfileirado duas vezes');
+SELECT tst.ok(NOT enqueue_password_reset_email('token-inventado'), 'token inventado não enfileira');
+RESET ROLE;
+SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template = 'invitation' AND to_email = 'convite13@alpha.test.local'
+                AND payload->>'token' = 'tok-convite-13' AND tenant_id = :'ta') = 1, 'outbox: convite com link e tenant');
+SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template = 'password_reset' AND to_email = 'cliente1@alpha.test.local'
+                AND tenant_id IS NULL) = 1, 'outbox: reset sem tenant');
+SET ROLE sd_worker;
+SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template IN ('invitation', 'password_reset')) >= 2,
+              'worker enxerga os e-mails de sistema');
+RESET ROLE;
+DELETE FROM email_outbox WHERE template = 'password_reset' AND to_email LIKE '%.test.local';
+
+-- ======================================================================
+\warn '== 14. estado do worker: automações e alerta de SLA =='
+RESET ROLE;
+SELECT min(id) AS ev14 FROM ticket_events WHERE tenant_id = :'ta' \gset
+SET ROLE sd_worker;
+INSERT INTO automation_runs (event_id, tenant_id, outcome) VALUES (:ev14, :'ta', 'no_match');
+SELECT tst.ok((SELECT count(*) FROM automation_runs WHERE event_id = :ev14) = 1, 'worker registra evento avaliado');
+WITH x AS (INSERT INTO automation_runs (event_id, tenant_id, outcome) VALUES (:ev14, :'ta', 'applied')
+           ON CONFLICT DO NOTHING RETURNING 1)
+SELECT count(*) AS dup14 FROM x \gset
+SELECT tst.ok(:dup14 = 0, 'segunda instância não reprocessa o mesmo evento');
+UPDATE automation_runs SET outcome = 'applied', rules = '{}' WHERE event_id = :ev14;
+SELECT tst.ok((SELECT outcome FROM automation_runs WHERE event_id = :ev14) = 'applied', 'worker registra o resultado da avaliação');
+SELECT id AS timer14 FROM sla_timers WHERE tenant_id = :'ta' LIMIT 1 \gset
+UPDATE sla_timers SET warned_at = now() WHERE id = :'timer14';
+SELECT tst.ok((SELECT warned_at IS NOT NULL FROM sla_timers WHERE id = :'timer14'), 'worker marca o alerta de SLA');
+SELECT tst.expect_error(format('UPDATE sla_timers SET due_at = now() WHERE id = %L', :'timer14'),
+                        '42501', 'worker não altera prazos de SLA');
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ua', false);
+SELECT tst.expect_error('SELECT count(*) FROM automation_runs', '42501', 'API não lê o estado do worker');
+RESET ROLE;
+UPDATE sla_timers SET due_at = due_at + interval '1 hour' WHERE id = :'timer14';
+SELECT tst.ok((SELECT warned_at IS NULL FROM sla_timers WHERE id = :'timer14'), 'prazo novo libera um novo alerta');
+
 -- ---------- limpeza ----------
 SELECT delete_tenant(id) FROM tenants WHERE slug IN ('t-alpha', 't-beta');
 DELETE FROM users   WHERE email LIKE '%.test.local';
