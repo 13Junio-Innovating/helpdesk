@@ -407,6 +407,31 @@ SELECT tst.ok((SELECT count(*) FROM email_outbox WHERE template IN ('invitation'
 RESET ROLE;
 DELETE FROM email_outbox WHERE template = 'password_reset' AND to_email LIKE '%.test.local';
 
+-- ======================================================================
+\warn '== 14. estado do worker: automações e alerta de SLA =='
+RESET ROLE;
+SELECT min(id) AS ev14 FROM ticket_events WHERE tenant_id = :'ta' \gset
+SET ROLE sd_worker;
+INSERT INTO automation_runs (event_id, tenant_id, outcome) VALUES (:ev14, :'ta', 'no_match');
+SELECT tst.ok((SELECT count(*) FROM automation_runs WHERE event_id = :ev14) = 1, 'worker registra evento avaliado');
+WITH x AS (INSERT INTO automation_runs (event_id, tenant_id, outcome) VALUES (:ev14, :'ta', 'applied')
+           ON CONFLICT DO NOTHING RETURNING 1)
+SELECT count(*) AS dup14 FROM x \gset
+SELECT tst.ok(:dup14 = 0, 'segunda instância não reprocessa o mesmo evento');
+UPDATE automation_runs SET outcome = 'applied', rules = '{}' WHERE event_id = :ev14;
+SELECT tst.ok((SELECT outcome FROM automation_runs WHERE event_id = :ev14) = 'applied', 'worker registra o resultado da avaliação');
+SELECT id AS timer14 FROM sla_timers WHERE tenant_id = :'ta' LIMIT 1 \gset
+UPDATE sla_timers SET warned_at = now() WHERE id = :'timer14';
+SELECT tst.ok((SELECT warned_at IS NOT NULL FROM sla_timers WHERE id = :'timer14'), 'worker marca o alerta de SLA');
+SELECT tst.expect_error(format('UPDATE sla_timers SET due_at = now() WHERE id = %L', :'timer14'),
+                        '42501', 'worker não altera prazos de SLA');
+SET ROLE sd_app;
+SELECT app_set_context(:'ta', :'ua', false);
+SELECT tst.expect_error('SELECT count(*) FROM automation_runs', '42501', 'API não lê o estado do worker');
+RESET ROLE;
+UPDATE sla_timers SET due_at = due_at + interval '1 hour' WHERE id = :'timer14';
+SELECT tst.ok((SELECT warned_at IS NULL FROM sla_timers WHERE id = :'timer14'), 'prazo novo libera um novo alerta');
+
 -- ---------- limpeza ----------
 SELECT delete_tenant(id) FROM tenants WHERE slug IN ('t-alpha', 't-beta');
 DELETE FROM users   WHERE email LIKE '%.test.local';

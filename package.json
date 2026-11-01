@@ -1,12 +1,17 @@
 {
   "name": "helpdesk-saas",
   "private": true,
-  "workspaces": ["api"],
-  "engines": { "node": ">=22" },
+  "workspaces": [
+    "api"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "db:reset": "./db/dev-reset.sh",
     "db:test": "bash -c 'set -a; . ./.env; set +a; ./db/tests/run.sh'",
     "api:dev": "npm run start:dev -w api",
-    "api:test": "npm run test -w api && npm run test:e2e -w api"
+    "api:test": "npm run test -w api && npm run test:e2e -w api",
+    "worker:dev": "npm run worker:dev -w api"
   }
 }

@@ -9,6 +9,9 @@ import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/bootstrap.js';
 import { AppConfig } from '../src/config/app-config.js';
 import type { Env } from '../src/config/env.js';
+import { WorkerCoreModule } from '../src/worker/worker.module.js';
+import { WorkerConfig } from '../src/worker/worker-config.js';
+import type { WorkerEnv } from '../src/worker/worker-env.js';
 
 export const PASSWORD = 'demo1234';
 export const API = '/api/v1';
@@ -131,4 +134,47 @@ export async function inviteAndAccept(t: TestApp, su: pg.Pool, adminToken: strin
   if (inv.status !== 201) throw new Error(`convite falhou: ${inv.status} ${JSON.stringify(inv.body)}`);
   const token = await invitationToken(su, email);
   return t.http().post(`${API}/auth/accept-invite`).send({ token, name: `Pessoa ${role}`, password: PASSWORD });
+}
+
+// ---------- worker ----------
+
+/** Núcleo do worker (sem agendador), com conexão própria ao banco como sd_worker. */
+export async function createWorkerCore(overrides: Partial<WorkerEnv> = {}) {
+  const builder = Test.createTestingModule({ imports: [WorkerCoreModule] });
+  if (Object.keys(overrides).length) {
+    builder.overrideProvider(WorkerConfig).useFactory({
+      factory: (cs: ConfigService<WorkerEnv, true>) => {
+        const base = new WorkerConfig(cs);
+        return { get: <K extends keyof WorkerEnv>(k: K) => (k in overrides ? overrides[k] : base.get(k)) };
+      },
+      inject: [ConfigService],
+    });
+  }
+  const moduleRef = await builder.compile();
+  await moduleRef.init();
+  return moduleRef;
+}
+
+export const MAILPIT = process.env.MAILPIT_URL ?? 'http://127.0.0.1:8025';
+
+export interface MailpitMessage { ID: string; MessageID: string; Subject: string; To: { Address: string }[] }
+
+/** Busca no Mailpit (mesma sintaxe da interface: to:, subject:, ...). */
+export async function mailpitSearch(query: string): Promise<MailpitMessage[]> {
+  const res = await fetch(`${MAILPIT}/api/v1/search?limit=1000&query=${encodeURIComponent(query)}`);
+  if (!res.ok) throw new Error(`Mailpit respondeu ${res.status}`);
+  return ((await res.json()) as { messages: MailpitMessage[] }).messages;
+}
+
+export async function mailpitMessage(id: string): Promise<{ Text: string; HTML: string; Subject: string }> {
+  return (await fetch(`${MAILPIT}/api/v1/message/${id}`)).json() as Promise<{ Text: string; HTML: string; Subject: string }>;
+}
+
+export async function assertMailpitUp(): Promise<void> {
+  try {
+    const r = await fetch(`${MAILPIT}/api/v1/info`);
+    if (!r.ok) throw new Error(String(r.status));
+  } catch {
+    throw new Error(`Mailpit não está acessível em ${MAILPIT}. Suba com "docker compose up -d mailpit" (ou o binário mailpit).`);
+  }
 }

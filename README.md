@@ -8,7 +8,7 @@ base de conhecimento, apontamento de horas, automações, planos e limites).
 ## Subir em desenvolvimento
 
 ```bash
-docker compose up -d            # Postgres 16 (ou use um Postgres local)
+docker compose up -d            # Postgres 16 + Mailpit (ou use serviços locais)
 cp .env.example .env
 ./db/dev-reset.sh               # drop + roles + migrations + seed
 PGSUPER_DB_URL=postgresql://postgres:pg_dev_pw@127.0.0.1:5432/helpdesk ./db/tests/run.sh
@@ -19,7 +19,8 @@ API (precisa de Node 22+):
 ```bash
 npm install                     # workspaces da raiz (api/)
 npm run api:dev                 # http://localhost:3000/api/v1  ·  Swagger em http://localhost:3000/docs
-npm run api:test                # unitários + e2e (contra o Postgres real; rode ./db/dev-reset.sh antes)
+npm run worker:dev              # worker (outbox, SLA, automações) — e-mails em http://localhost:8025
+npm run api:test                # unitários + e2e (Postgres e Mailpit reais; rode ./db/dev-reset.sh antes)
 ```
 
 Seed: workspace `demo` — `admin@demo.local` / `demo1234` (agentes `carlos@`, `bia@`; clientes `joao@acme.local`, etc.).
@@ -33,9 +34,9 @@ db/
   migrations/         001 tipos · 002 tenancy · 003 catálogo+SLA · 004 chamados · 005 KB/outbox
                       006 triggers · 007 funções · 008 RLS+grants · 009 FKs deferíveis+delete_tenant
                       010 refresh tokens+reset de senha · 011 macros+visões salvas · 012 relatórios
-                      013 e-mails de sistema (convite e reset de senha) na outbox
+                      013 e-mails de sistema (convite e reset de senha) na outbox · 014 estado do worker
   seed/dev.sql        dados de demonstração
-  tests/              suíte SQL (118 asserções) que roda como sd_app/sd_worker de verdade
+  tests/              suíte SQL (125 asserções) que roda como sd_app/sd_worker de verdade
 ```
 
 ## Segurança multi-tenant (o ponto mais importante)
@@ -111,6 +112,7 @@ api/src/
   reports/         GET /reports/overview -> report_overview()
   macros/          respostas prontas (com render de variáveis) e visões salvas
   tenants/         GET/PATCH /tenant: plano, uso do mês, trial
+  worker/          processo separado (worker.main.ts) com a conexão sd_worker — nunca importado pelo AppModule
 api/test/          e2e contra o banco de dev (superusuário só para preparar/limpar cenários)
 ```
 
@@ -163,6 +165,21 @@ Campos: `subject, description, channel, tags, priority.{id,name}, status.{id,nam
 requester.email, organization.{id,name}`. Operadores: `eq`, `in`, `contains` (sem diferenciar maiúsculas). Todas as condições
 precisam valer (E). As referências das ações são conferidas no workspace ao salvar.
 
+## Worker — `api/src/worker`
+
+Processo separado (`npm run worker` / `worker:dev`), conectado como **`sd_worker`**. O `AppModule` (HTTP) não importa
+o módulo do worker, então nenhuma rota de usuário alcança essa conexão (há teste disso).
+
+| Job | Quando | O quê |
+|---|---|---|
+| outbox | a cada `OUTBOX_POLL_MS` (5 s) | envia `email_outbox` por SMTP (nodemailer). Reserva com `FOR UPDATE SKIP LOCKED` + prazo de 5 min (`sending`); `sent` (e o token de convite/reset sai do payload) ou `failed` com `attempts+1`, `last_error` e backoff exponencial (30 s, 60 s, 120 s... até 1 h); desiste após `OUTBOX_MAX_ATTEMPTS` (5) |
+| sla | `SLA_CRON` (todo minuto) | `sla_mark_breaches()`; depois o alerta de 80%: e-mail para o responsável + evento `sla_warning`, uma vez por prazo (`warned_at`) |
+| automações | a cada `AUTOMATIONS_POLL_MS` (5 s) | avalia `automation_rules` sobre os eventos novos (`created`, mudanças, `sla_warning`, `sla_breached`) |
+| limpeza | `PURGE_CRON` (diária, 04:17) | `auth_purge_expired()` e histórico do avaliador com mais de 7 dias |
+
+Templates: `ticket_created`, `ticket_reply` (só resposta pública), `invitation`, `password_reset`, `sla_warning`,
+`staff_notification`. Os links usam `APP_URL` (`/tickets/:id`, `/accept-invite?token=`, `/reset-password?token=`).
+
 ### Decisões
 
 - **NestJS 12 em ESM** (padrão do `nest new` atual), com Vitest no lugar de Jest, como no template oficial.
@@ -208,12 +225,24 @@ precisam valer (E). As referências das ações são conferidas no workspace ao 
 - **Listas do catálogo não são paginadas** (são pequenas por natureza). Membros, organizações, KB e chamados são.
 - Mudar SLA, prioridade-padrão ou horário comercial **não recalcula** os prazos de chamados já abertos (só os novos e
   os que mudarem de prioridade), que é o comportamento dos triggers da etapa 1.
+- **Migration 014 (estado do worker).** O avaliador de automações precisa lembrar quais eventos já avaliou, e o
+  alerta de SLA, quais prazos já avisou; o `sd_worker` não cria tabela nem altera `sla_timers`. Entram
+  `automation_runs` (PK = evento: a própria PK é a trava entre instâncias) e `sla_timers.warned_at` (zerado por
+  trigger quando o prazo muda). Não usei um cursor por id porque ids de identity podem ser confirmados fora de
+  ordem por transações concorrentes, e um cursor pularia eventos.
+- **Automações sem cascata**: os eventos gerados pelas ações de uma automação são marcados `skipped` na mesma
+  transação, então uma regra nunca dispara outra. Todas as regras do evento são avaliadas sobre o mesmo estado do
+  chamado; para o mesmo campo, a última regra (por `position`) vence. Uma transação por evento: ação inválida no
+  momento da execução (ex.: agente desativado) vira `error` registrado e não trava a fila (não há nova tentativa).
+- **`notify_staff`** avisa o responsável; sem responsável, os membros da fila; sem fila (ou fila vazia), toda a equipe.
+- **E-mail é entregue "pelo menos uma vez"**: se o worker cair entre o SMTP aceitar e o `UPDATE sent`, o e-mail
+  volta depois do prazo de reserva. O `Message-ID` é estável por linha da outbox, o que ajuda o destino a deduplicar.
+- **Alerta de 80%** usa tempo corrido desde a abertura (aproximação do prazo em minutos úteis).
 - **Pacote `shared/`** (tipos compartilhados com o front) fica para a fase do front, quando houver quem consuma.
 - Em produção o boot falha se o `JWT_SECRET` for o de exemplo ou se `COOKIE_SECURE=false`.
 
 ## Próximas etapas
 
 2. **API** — fases 1 (esqueleto, `DbService`, erros, health, auth), 2 (chamados) e 3 (catálogo, equipe, convites, KB,
-   relatórios, macros, visões, workspace) prontas. Próximas:
-   worker (outbox, `sla_mark_breaches`, automações); anexos e cobrança.
+   relatórios, macros, visões, workspace) e 4 (worker) prontas. Falta: anexos e cobrança (fase 7).
 3. **Front React**: portal do cliente + painel do atendente (fila, detalhe do chamado, SLA, KB, relatórios).
